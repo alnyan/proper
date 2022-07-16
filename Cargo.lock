@@ -434,6 +434,7 @@ dependencies = [
 name = "libproper"
 version = "0.1.0"
 dependencies = [
+ "log",
  "nalgebra 0.31.0",
  "vulkano",
  "vulkano-shaders",

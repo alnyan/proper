@@ -1,23 +1,35 @@
+use render::context::VulkanContext;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
+    window::WindowBuilder,
 };
 
+pub mod render;
+
 pub struct Application {
-    event_loop: EventLoop<()>
+    event_loop: EventLoop<()>,
+    render_context: VulkanContext,
 }
 
 impl Application {
     pub fn new() -> Self {
         let event_loop = EventLoop::new();
+        let render_context = VulkanContext::new_windowed(
+            &event_loop,
+            WindowBuilder::new()
+                .with_title("proper")
+                .with_resizable(false),
+        );
 
         Self {
-            event_loop
+            event_loop,
+            render_context,
         }
     }
 
-    pub fn run(self) {
-        self.event_loop.run(|event, _, flow| match event {
+    pub fn run(mut self) {
+        self.event_loop.run(move |event, _, flow| match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
@@ -29,6 +41,9 @@ impl Application {
                 ..
             } => {
                 todo!()
+            }
+            Event::RedrawEventsCleared => {
+                self.render_context.do_frame();
             }
             _ => (),
         });
