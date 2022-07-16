@@ -6,7 +6,7 @@ use vulkano::{
         Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo,
     },
     image::{ImageUsage, SwapchainImage},
-    instance::{Instance, InstanceCreateInfo, InstanceExtensions},
+    instance::{Instance, InstanceCreateInfo},
     swapchain::{self, Surface, Swapchain, SwapchainCreateInfo},
     sync::{self, GpuFuture},
 };
@@ -17,8 +17,6 @@ use winit::{
 };
 
 pub struct VulkanContext {
-    instance: Arc<Instance>,
-
     surface: Arc<Surface<Window>>,
 
     device: Arc<Device>,
@@ -27,7 +25,7 @@ pub struct VulkanContext {
     swapchain: Arc<Swapchain<Window>>,
     swapchain_images: Vec<Arc<SwapchainImage<Window>>>,
 
-    recreate_swapchain: bool,
+    need_swapchain_recreation: bool,
 }
 
 impl VulkanContext {
@@ -69,23 +67,26 @@ impl VulkanContext {
         log::debug!("Vulkan init finished");
 
         Self {
-            instance,
             surface,
             device,
             queue,
             swapchain,
             swapchain_images,
-            recreate_swapchain: false,
+            need_swapchain_recreation: false,
         }
     }
 
     pub fn do_frame(&mut self) {
-        if self.recreate_swapchain {
-            todo!()
+        if self.need_swapchain_recreation {
+            self.recreate_swapchain();
         }
 
-        let (image_index, _, acquire_future) =
+        let (image_index, suboptimal, acquire_future) =
             swapchain::acquire_next_image(self.swapchain.clone(), None).unwrap();
+
+        if suboptimal {
+            self.need_swapchain_recreation = true;
+        }
 
         let future = sync::now(self.device.clone())
             .join(acquire_future)
@@ -94,6 +95,23 @@ impl VulkanContext {
             .unwrap();
 
         future.wait(None).unwrap();
+    }
+
+    pub fn invalidate_surface(&mut self) {
+        self.need_swapchain_recreation = true;
+    }
+
+    fn recreate_swapchain(&mut self) {
+        let (new_swapchain, new_images) = self
+            .swapchain
+            .recreate(SwapchainCreateInfo {
+                image_extent: self.surface.window().inner_size().into(),
+                ..self.swapchain.create_info()
+            })
+            .unwrap();
+
+        self.swapchain = new_swapchain;
+        self.swapchain_images = new_images;
     }
 
     fn select_physical_device<'a>(

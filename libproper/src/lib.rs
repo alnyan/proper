@@ -40,7 +40,7 @@ impl Application {
                 event: WindowEvent::Resized(_),
                 ..
             } => {
-                todo!()
+                self.render_context.invalidate_surface();
             }
             Event::RedrawEventsCleared => {
                 self.render_context.do_frame();
