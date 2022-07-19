@@ -67,7 +67,7 @@ impl VulkanContext {
             physical,
             DeviceCreateInfo {
                 queue_create_infos: vec![QueueCreateInfo::family(queue_family)],
-                enabled_extensions: physical.required_extensions().union(&device_extensions),
+                enabled_extensions: physical.supported_extensions().intersection(&device_extensions),
                 ..Default::default()
             },
         )

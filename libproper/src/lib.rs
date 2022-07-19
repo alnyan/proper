@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use event::Event;
-use layer::Layer;
 use render::{context::{VulkanContext, LayerVec}, gui::GuiLayer};
 use winit::{
     event::WindowEvent,
