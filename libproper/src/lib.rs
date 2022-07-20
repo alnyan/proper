@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use event::Event;
-use render::{context::{VulkanContext, LayerVec}, gui::GuiLayer};
+use render::{context::{VulkanContext, LayerVec}, gui::GuiLayer, scene::SceneLayer};
 use winit::{
     event::WindowEvent,
     event_loop::{ControlFlow, EventLoop},
@@ -30,6 +30,14 @@ impl Application {
             layers.clone(),
         );
 
+        let scene = Box::new(SceneLayer::new(
+            render_context.gfx_queue().clone(),
+            render_context.output_format(),
+            render_context.swapchain_images(),
+            render_context.viewport().clone()
+        ));
+        layers.lock().unwrap().push(scene);
+
         let gui = Box::new(GuiLayer::new(
             render_context.surface().clone(),
             render_context.gfx_queue().clone(),
@@ -57,7 +65,7 @@ impl Application {
                 }
 
                 if let Ok(event) = Event::try_from(&event) {
-                    for layer in self.layers.lock().unwrap().iter_mut() {
+                    for layer in self.layers.lock().unwrap().iter_mut().rev() {
                         if layer.on_event(&event, flow) {
                             break;
                         }
@@ -67,7 +75,7 @@ impl Application {
                 }
             }
             winit::event::Event::RedrawEventsCleared => {
-                self.render_context.do_frame();
+                self.render_context.do_frame(flow);
             }
             _ => (),
         });

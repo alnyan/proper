@@ -14,7 +14,7 @@ pub struct GuiLayer {
 
 impl GuiLayer {
     pub fn new(surface: Arc<Surface<Window>>, gfx_queue: Arc<Queue>) -> Self {
-        let inner = Gui::new(surface, gfx_queue, false);
+        let inner = Gui::new(surface, gfx_queue, true);
         Self { inner }
     }
 }
@@ -36,11 +36,14 @@ impl Layer for GuiLayer {
         self.inner.immediate_ui(|gui| {
             let ctx = gui.context();
 
-            egui::CentralPanel::default().show(&ctx, |ui| {
-                if ui.add(egui::Button::new("This is a button")).clicked() {
-                    println!("Button clicked!");
-                }
-            });
+            egui::SidePanel::new(egui::panel::Side::Left, 0)
+                .max_width(128.0)
+                .resizable(true)
+                .show(&ctx, |ui| {
+                    if ui.add(egui::Button::new("TEXT")).clicked() {
+                        println!("TEST");
+                    }
+                });
         });
 
         self.inner

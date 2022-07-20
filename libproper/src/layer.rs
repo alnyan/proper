@@ -1,10 +1,7 @@
-use std::sync::{Mutex, MutexGuard};
-
 use vulkano::sync::GpuFuture;
 use winit::event_loop::ControlFlow;
 
-use crate::{event::Event, render::{context::VulkanContext, frame::Frame}};
-
+use crate::{event::Event, render::frame::Frame};
 
 pub trait Layer {
     fn on_attach(&mut self);

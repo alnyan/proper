@@ -1,7 +1,16 @@
-use winit::{dpi::PhysicalSize, event::WindowEvent};
+use std::sync::Arc;
+
+use vulkano::{
+    image::{view::ImageView, SwapchainImage},
+    pipeline::graphics::viewport::Viewport,
+};
+use winit::{dpi::PhysicalSize, event::WindowEvent, window::Window};
 
 pub enum Event<'a> {
-    Draw,
+    SwapchainInvalidated(
+        &'a Vec<Arc<ImageView<SwapchainImage<Window>>>>,
+        Viewport,
+    ),
     WindowResized(PhysicalSize<u32>),
     WindowCloseRequested,
     // Required for egui-winit compat

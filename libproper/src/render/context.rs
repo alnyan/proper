@@ -1,20 +1,21 @@
 use std::sync::{Arc, Mutex};
 
-use egui_winit_vulkano::{egui, Gui};
 use vulkano::{
     device::{
         physical::{PhysicalDevice, PhysicalDeviceType, QueueFamily},
         Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo,
     },
-    image::{view::ImageView, ImageUsage, SwapchainImage},
+    format::Format,
+    image::{view::ImageView, ImageUsage, ImageViewAbstract, SwapchainImage},
     instance::{Instance, InstanceCreateInfo},
+    pipeline::graphics::viewport::Viewport,
     swapchain::{self, Surface, Swapchain, SwapchainCreateInfo},
     sync::{self, GpuFuture},
 };
 use vulkano_win::VkSurfaceBuild;
 use winit::{
     event_loop::{ControlFlow, EventLoop},
-    window::{Window, WindowBuilder},
+    window::{Window, WindowBuilder}, dpi::PhysicalSize,
 };
 
 use crate::{event::Event, layer::Layer};
@@ -31,16 +32,17 @@ pub struct VulkanContext {
 
     swapchain: Arc<Swapchain<Window>>,
     swapchain_images: Vec<Arc<ImageView<SwapchainImage<Window>>>>,
-    layers: LayerVec,
-
+    viewport: Viewport,
     need_swapchain_recreation: bool,
+
+    layers: LayerVec,
 }
 
 impl VulkanContext {
     pub fn new_windowed(
         event_loop: &EventLoop<()>,
         window_builder: WindowBuilder,
-        layers: LayerVec
+        layers: LayerVec,
     ) -> Self {
         log::debug!("Creating new windowed vulkan context");
 
@@ -67,7 +69,9 @@ impl VulkanContext {
             physical,
             DeviceCreateInfo {
                 queue_create_infos: vec![QueueCreateInfo::family(queue_family)],
-                enabled_extensions: physical.supported_extensions().intersection(&device_extensions),
+                enabled_extensions: physical
+                    .supported_extensions()
+                    .intersection(&device_extensions),
                 ..Default::default()
             },
         )
@@ -75,6 +79,8 @@ impl VulkanContext {
         let queue = queues.next().unwrap();
 
         let (swapchain, swapchain_images) = Self::create_swapchain(device.clone(), surface.clone());
+
+        let viewport = Self::create_viewport(&surface);
 
         log::debug!("Vulkan init finished");
 
@@ -84,6 +90,7 @@ impl VulkanContext {
             queue,
             swapchain,
             swapchain_images,
+            viewport,
             layers,
             need_swapchain_recreation: false,
         }
@@ -97,13 +104,32 @@ impl VulkanContext {
         &self.surface
     }
 
+    pub const fn swapchain_images(&self) -> &Vec<Arc<ImageView<SwapchainImage<Window>>>> {
+        &self.swapchain_images
+    }
+
+    pub const fn viewport(&self) -> &Viewport {
+        &self.viewport
+    }
+
+    pub fn output_format(&self) -> Format {
+        self.swapchain_images[0].format().unwrap()
+    }
+
     pub fn invalidate_surface(&mut self) {
         self.need_swapchain_recreation = true;
     }
 
-    pub fn do_frame(&mut self) {
+    pub fn do_frame(&mut self, flow: &mut ControlFlow) {
         if self.need_swapchain_recreation {
             self.recreate_swapchain();
+
+            // TODO use some "event dispatcher" for that
+            let event = Event::SwapchainInvalidated(&self.swapchain_images, self.viewport.clone());
+            for layer in self.layers.lock().unwrap().iter_mut() {
+                // Ignore hierarchy, this event needs to be delivered to every layer
+                layer.on_event(&event, flow);
+            }
         }
 
         let (image_index, suboptimal, acquire_future) =
@@ -117,7 +143,8 @@ impl VulkanContext {
         let frame = Frame {
             image_index,
             gfx_queue: self.queue.clone(),
-            destination: self.swapchain_images[image_index].clone()
+            destination: self.swapchain_images[image_index].clone(),
+            viewport: self.viewport.clone(),
         };
         for layer in self.layers.lock().unwrap().iter_mut() {
             in_future = layer.on_draw(in_future, &frame);
@@ -132,11 +159,12 @@ impl VulkanContext {
         future.wait(None).unwrap();
     }
 
-    fn recreate_swapchain(&mut self) {
+    fn recreate_swapchain(&mut self) -> PhysicalSize<u32> {
+        let new_dimensions = self.surface.window().inner_size();
         let (new_swapchain, new_images) = self
             .swapchain
             .recreate(SwapchainCreateInfo {
-                image_extent: self.surface.window().inner_size().into(),
+                image_extent: new_dimensions.into(),
                 ..self.swapchain.create_info()
             })
             .unwrap();
@@ -146,6 +174,10 @@ impl VulkanContext {
             .into_iter()
             .map(|image| ImageView::new_default(image).unwrap())
             .collect();
+
+        self.viewport = Self::create_viewport(&self.surface);
+
+        new_dimensions
     }
 
     fn select_physical_device<'b>(
@@ -210,5 +242,14 @@ impl VulkanContext {
                 .map(|image| ImageView::new_default(image).unwrap())
                 .collect(),
         )
+    }
+
+    fn create_viewport(surface: &Arc<Surface<Window>>) -> Viewport {
+        let dim = surface.window().inner_size();
+        Viewport {
+            origin: [0.0, dim.height as f32],
+            dimensions: [dim.width as f32, -(dim.height as f32)],
+            depth_range: 0.0..1.0,
+        }
     }
 }
