@@ -2,16 +2,17 @@ use std::{sync::Arc, time::Instant};
 
 use nalgebra::{Matrix4, Point3, Vector3};
 use vulkano::{
-    buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess},
+    buffer::{BufferUsage, CpuBufferPool, TypedBufferAccess},
     command_buffer::{
         AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
     },
     descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
-    device::Queue,
+    device::{Device, Queue},
     format::{ClearValue, Format},
-    image::{view::ImageView, SwapchainImage},
+    image::{view::ImageView, AttachmentImage, ImageViewAbstract, SwapchainImage},
     pipeline::{
         graphics::{
+            depth_stencil::DepthStencilState,
             input_assembly::InputAssemblyState,
             vertex_input::BuffersDefinition,
             viewport::{Viewport, ViewportState},
@@ -23,9 +24,10 @@ use vulkano::{
     sync::GpuFuture,
 };
 use winit::{
+    dpi::PhysicalSize,
     event::{ElementState, MouseButton, WindowEvent},
     event_loop::ControlFlow,
-    window::Window, dpi::PhysicalSize,
+    window::Window,
 };
 
 use crate::{
@@ -46,6 +48,7 @@ pub struct SceneLayer {
     fs: Arc<ShaderModule>,
     pipeline: Arc<GraphicsPipeline>,
     framebuffers: Vec<Arc<Framebuffer>>,
+    depth_view: Arc<ImageView<AttachmentImage>>,
     render_pass: Arc<RenderPass>,
     scene_pool: CpuBufferPool<shader::scene_vs::ty::Scene_Data>,
     start_time: Instant,
@@ -71,11 +74,17 @@ impl SceneLayer {
                     store: Store,
                     format: output_format,
                     samples: 1,
+                },
+                depth: {
+                    load: Clear,
+                    store: DontCare,
+                    format: Format::D16_UNORM,
+                    samples: 1,
                 }
             },
             pass: {
                 color: [color],
-                depth_stencil: {}
+                depth_stencil: {depth}
             }
         )
         .unwrap();
@@ -84,7 +93,8 @@ impl SceneLayer {
         let fs = shader::scene_fs::load(gfx_queue.device().clone()).unwrap();
 
         let pipeline = Self::create_pipeline(&gfx_queue, &vs, &fs, viewport, render_pass.clone());
-        let framebuffers = Self::create_framebuffers(&render_pass, swapchain_images);
+        let (framebuffers, depth_view) =
+            Self::create_framebuffers(gfx_queue.device().clone(), &render_pass, swapchain_images);
 
         let mut scene = Scene::default();
 
@@ -115,6 +125,7 @@ impl SceneLayer {
             fs,
             pipeline,
             framebuffers,
+            depth_view,
             scene_pool,
             start_time,
             dimensions,
@@ -136,28 +147,43 @@ impl SceneLayer {
             .vertex_shader(vs.entry_point("main").unwrap(), ())
             .fragment_shader(fs.entry_point("main").unwrap(), ())
             .viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
+            .depth_stencil_state(DepthStencilState::simple_depth_test())
             .render_pass(Subpass::from(render_pass, 0).unwrap())
             .build(gfx_queue.device().clone())
             .unwrap()
     }
 
     fn create_framebuffers(
+        device: Arc<Device>,
         render_pass: &Arc<RenderPass>,
         swapchain_images: &Vec<Arc<ImageView<SwapchainImage<Window>>>>,
-    ) -> Vec<Arc<Framebuffer>> {
-        swapchain_images
-            .into_iter()
-            .map(|image| {
-                Framebuffer::new(
-                    render_pass.clone(),
-                    FramebufferCreateInfo {
-                        attachments: vec![image.clone()],
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-            })
-            .collect()
+    ) -> (Vec<Arc<Framebuffer>>, Arc<ImageView<AttachmentImage>>) {
+        let depth_view = ImageView::new_default(
+            AttachmentImage::transient(
+                device,
+                swapchain_images[0].dimensions().width_height(),
+                Format::D16_UNORM,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        (
+            swapchain_images
+                .into_iter()
+                .map(|image| {
+                    Framebuffer::new(
+                        render_pass.clone(),
+                        FramebufferCreateInfo {
+                            attachments: vec![image.clone(), depth_view.clone()],
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap()
+                })
+                .collect(),
+            depth_view,
+        )
     }
 }
 
@@ -167,8 +193,17 @@ impl Layer for SceneLayer {
     fn on_detach(&mut self) {}
 
     fn on_event(&mut self, event: &Event, _: &mut ControlFlow) -> bool {
-        if let Event::SwapchainInvalidated { swapchain_images, viewport, dimensions } = event {
-            self.framebuffers = Self::create_framebuffers(&self.render_pass, swapchain_images);
+        if let Event::SwapchainInvalidated {
+            swapchain_images,
+            viewport,
+            dimensions,
+        } = event
+        {
+            (self.framebuffers, self.depth_view) = Self::create_framebuffers(
+                self.gfx_queue.device().clone(),
+                &self.render_pass,
+                swapchain_images,
+            );
             self.pipeline = Self::create_pipeline(
                 &self.gfx_queue,
                 &self.vs,
@@ -237,6 +272,9 @@ impl Layer for SceneLayer {
         render_pass_begin_info
             .clear_values
             .push(Some(ClearValue::Float([0.0, 0.0, 0.0, 1.0])));
+        render_pass_begin_info
+            .clear_values
+            .push(Some(ClearValue::Depth(1.0)));
 
         builder
             .begin_render_pass(render_pass_begin_info, SubpassContents::Inline)

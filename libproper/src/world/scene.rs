@@ -3,14 +3,11 @@ use std::sync::Arc;
 use bytemuck::Zeroable;
 use nalgebra::Matrix4;
 use vulkano::{
-    buffer::{BufferUsage, CpuAccessibleBuffer, ImmutableBuffer},
+    buffer::{BufferUsage, CpuAccessibleBuffer},
     device::Queue,
 };
 
-use crate::{
-    render::{shader, Vertex},
-    resource::model::Model,
-};
+use crate::{render::shader, resource::model::Model};
 
 use super::entity::Entity;
 

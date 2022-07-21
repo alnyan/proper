@@ -15,6 +15,7 @@ pub enum Storage {
 }
 
 pub struct Model {
+    #[allow(dead_code)]
     gfx_queue: Arc<Queue>,
     data: Storage,
 }
