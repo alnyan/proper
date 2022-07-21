@@ -1,11 +1,12 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
-use nalgebra::Point3;
+use nalgebra::{Matrix4, Point3, Vector3};
 use vulkano::{
-    buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess},
+    buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess},
     command_buffer::{
         AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
     },
+    descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
     device::Queue,
     format::{ClearValue, Format},
     image::{view::ImageView, SwapchainImage},
@@ -15,7 +16,7 @@ use vulkano::{
             vertex_input::BuffersDefinition,
             viewport::{Viewport, ViewportState},
         },
-        GraphicsPipeline,
+        GraphicsPipeline, Pipeline, PipelineBindPoint,
     },
     render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass},
     shader::ShaderModule,
@@ -27,7 +28,14 @@ use winit::{
     window::Window,
 };
 
-use crate::{event::Event, layer::Layer};
+use crate::{
+    event::Event,
+    layer::Layer,
+    world::{
+        entity::Entity,
+        scene::{MeshObject, Scene},
+    },
+};
 
 use super::{frame::Frame, shader, Vertex};
 
@@ -38,11 +46,11 @@ pub struct SceneLayer {
     pipeline: Arc<GraphicsPipeline>,
     framebuffers: Vec<Arc<Framebuffer>>,
     render_pass: Arc<RenderPass>,
+    scene_pool: CpuBufferPool<shader::scene_vs::ty::Scene_Data>,
+    start_time: Instant,
 
     // Dummy stuff
-    mode: u32,
-    triangle_buffer: Arc<CpuAccessibleBuffer<[Vertex]>>,
-    quad_buffer: Arc<CpuAccessibleBuffer<[Vertex]>>,
+    scene: Scene,
 }
 
 impl SceneLayer {
@@ -75,50 +83,71 @@ impl SceneLayer {
         let pipeline = Self::create_pipeline(&gfx_queue, &vs, &fs, viewport, render_pass.clone());
         let framebuffers = Self::create_framebuffers(&render_pass, swapchain_images);
 
-        let triangle_buffer = CpuAccessibleBuffer::from_iter(
-            gfx_queue.device().clone(),
-            BufferUsage::vertex_buffer(),
-            false,
+        let mut scene = Scene::default();
+
+        let (triangle_mesh, triangle_init) = ImmutableBuffer::from_iter(
             vec![
                 Vertex {
-                    v_position: Point3::new(-1.0, -1.0, 0.0),
+                    v_position: Point3::new(-0.5, -0.5, 0.0),
                 },
                 Vertex {
-                    v_position: Point3::new(0.0, 1.0, 0.0),
+                    v_position: Point3::new(0.0, 0.5, 0.0),
                 },
                 Vertex {
-                    v_position: Point3::new(1.0, -1.0, 0.0),
+                    v_position: Point3::new(0.5, -0.5, 0.0),
                 },
             ],
+            BufferUsage::vertex_buffer(),
+            gfx_queue.clone(),
+        )
+        .unwrap();
+        let (quad_mesh, quad_init) = ImmutableBuffer::from_iter(
+            vec![
+                Vertex {
+                    v_position: Point3::new(-0.5, -0.5, 0.0),
+                },
+                Vertex {
+                    v_position: Point3::new(0.5, -0.5, 0.0),
+                },
+                Vertex {
+                    v_position: Point3::new(0.5, 0.5, 0.0),
+                },
+                Vertex {
+                    v_position: Point3::new(0.5, 0.5, 0.0),
+                },
+                Vertex {
+                    v_position: Point3::new(-0.5, 0.5, 0.0),
+                },
+                Vertex {
+                    v_position: Point3::new(-0.5, -0.5, 0.0),
+                },
+            ],
+            BufferUsage::vertex_buffer(),
+            gfx_queue.clone(),
         )
         .unwrap();
 
-        let quad_buffer = CpuAccessibleBuffer::from_iter(
-            gfx_queue.device().clone(),
-            BufferUsage::vertex_buffer(),
-            false,
-            vec![
-                Vertex {
-                    v_position: Point3::new(-1.0, -1.0, 0.0),
-                },
-                Vertex {
-                    v_position: Point3::new(1.0, -1.0, 0.0),
-                },
-                Vertex {
-                    v_position: Point3::new(1.0, 1.0, 0.0),
-                },
-                Vertex {
-                    v_position: Point3::new(1.0, 1.0, 0.0),
-                },
-                Vertex {
-                    v_position: Point3::new(-1.0, 1.0, 0.0),
-                },
-                Vertex {
-                    v_position: Point3::new(-1.0, -1.0, 0.0),
-                },
-            ],
-        )
-        .unwrap();
+        triangle_init
+            .join(quad_init)
+            .then_signal_fence_and_flush()
+            .unwrap()
+            .wait(None)
+            .unwrap();
+
+        let mesh0 = MeshObject::new(gfx_queue.clone(), triangle_mesh.clone());
+        scene
+            .entities
+            .push(Entity::new(Point3::new(0.0, 0.0, 0.0), Some(mesh0)));
+
+        let mesh1 = MeshObject::new(gfx_queue.clone(), quad_mesh.clone());
+        scene
+            .entities
+            .push(Entity::new(Point3::new(2.0, 0.0, 0.0), Some(mesh1)));
+
+        let scene_pool =
+            CpuBufferPool::new(gfx_queue.device().clone(), BufferUsage::uniform_buffer());
+
+        let start_time = Instant::now();
 
         Self {
             gfx_queue,
@@ -127,10 +156,10 @@ impl SceneLayer {
             fs,
             pipeline,
             framebuffers,
+            scene_pool,
+            start_time,
 
-            mode: 0,
-            triangle_buffer,
-            quad_buffer,
+            scene,
         }
     }
 
@@ -196,13 +225,42 @@ impl Layer for SceneLayer {
             ..
         }) = event
         {
-            self.mode = 1 - self.mode;
+            todo!()
         }
 
         false
     }
 
     fn on_draw(&mut self, in_future: Box<dyn GpuFuture>, frame: &Frame) -> Box<dyn GpuFuture> {
+        let scene_subbuffer = {
+            let now = Instant::now();
+            let t = (now - self.start_time).as_secs_f64();
+
+            let camera_position = Point3::new(t.cos() as f32 * 5.0, 5.0, t.sin() as f32 * 5.0);
+            let view = Matrix4::look_at_rh(
+                &camera_position,
+                &Point3::new(0.0, 0.0, 0.0),
+                &Vector3::new(0.0, 1.0, 0.0),
+            );
+            let projection = Matrix4::new_perspective(1.0, 45.0, 0.01, 100.0);
+
+            let data = shader::scene_vs::ty::Scene_Data {
+                projection: projection.into(),
+                view: view.into(),
+            };
+
+            self.scene_pool.next(data).unwrap()
+        };
+
+        let scene_layout = self.pipeline.layout().set_layouts().get(0).unwrap();
+        let model_layout = self.pipeline.layout().set_layouts().get(1).unwrap();
+
+        let scene_set = PersistentDescriptorSet::new(
+            scene_layout.clone(),
+            vec![WriteDescriptorSet::buffer(0, scene_subbuffer)],
+        )
+        .unwrap();
+
         let mut builder = AutoCommandBufferBuilder::primary(
             self.gfx_queue.device().clone(),
             self.gfx_queue.family(),
@@ -218,22 +276,40 @@ impl Layer for SceneLayer {
             .clear_values
             .push(Some(ClearValue::Float([0.0, 0.0, 0.0, 1.0])));
 
-        let buffer;
-        if self.mode == 0 {
-            buffer = &self.triangle_buffer;
-        } else {
-            buffer = &self.quad_buffer;
-        }
-
         builder
             .begin_render_pass(render_pass_begin_info, SubpassContents::Inline)
             .unwrap()
             .bind_pipeline_graphics(self.pipeline.clone())
-            .bind_vertex_buffers(0, buffer.clone())
-            .draw(buffer.len().try_into().unwrap(), 1, 0, 0)
-            .unwrap()
-            .end_render_pass()
-            .unwrap();
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                self.pipeline.layout().clone(),
+                0,
+                scene_set,
+            );
+
+        for object in self.scene.iter() {
+            if let Some(mesh) = object.mesh() {
+                let model_set = PersistentDescriptorSet::new(
+                    model_layout.clone(),
+                    vec![WriteDescriptorSet::buffer(0, mesh.model_buffer().clone())],
+                )
+                .unwrap();
+
+                let vertex_buffer = mesh.mesh_data();
+                builder
+                    .bind_vertex_buffers(0, vertex_buffer.clone())
+                    .bind_descriptor_sets(
+                        PipelineBindPoint::Graphics,
+                        self.pipeline.layout().clone(),
+                        1,
+                        model_set,
+                    )
+                    .draw(vertex_buffer.len().try_into().unwrap(), 1, 0, 0)
+                    .unwrap();
+            }
+        }
+
+        builder.end_render_pass().unwrap();
 
         let cb = builder.build().unwrap();
 

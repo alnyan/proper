@@ -11,6 +11,7 @@ use winit::{
 pub mod event;
 pub mod layer;
 pub mod render;
+pub mod world;
 
 pub struct Application {
     event_loop: EventLoop<()>,
