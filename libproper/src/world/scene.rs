@@ -7,7 +7,10 @@ use vulkano::{
     device::Queue,
 };
 
-use crate::render::{shader, Vertex};
+use crate::{
+    render::{shader, Vertex},
+    resource::model::Model,
+};
 
 use super::entity::Entity;
 
@@ -16,8 +19,7 @@ pub struct Scene {
 }
 
 pub struct MeshObject {
-    // TODO mesh models
-    mesh_data: Arc<ImmutableBuffer<[Vertex]>>,
+    model: Arc<Model>,
     model_buffer: Arc<CpuAccessibleBuffer<shader::scene_vs::ty::Model_Data>>,
 }
 
@@ -37,7 +39,7 @@ impl Default for Scene {
 }
 
 impl MeshObject {
-    pub fn new(gfx_queue: Arc<Queue>, mesh_data: Arc<ImmutableBuffer<[Vertex]>>) -> Self {
+    pub fn new(gfx_queue: Arc<Queue>, model: Arc<Model>) -> Self {
         let model_buffer = CpuAccessibleBuffer::from_data(
             gfx_queue.device().clone(),
             BufferUsage::uniform_buffer(),
@@ -46,13 +48,13 @@ impl MeshObject {
         )
         .unwrap();
         Self {
-            mesh_data,
+            model,
             model_buffer,
         }
     }
 
-    pub const fn mesh_data(&self) -> &Arc<ImmutableBuffer<[Vertex]>> {
-        &self.mesh_data
+    pub const fn model(&self) -> &Arc<Model> {
+        &self.model
     }
 
     pub const fn model_buffer(

@@ -25,12 +25,13 @@ use vulkano::{
 use winit::{
     event::{ElementState, MouseButton, WindowEvent},
     event_loop::ControlFlow,
-    window::Window,
+    window::Window, dpi::PhysicalSize,
 };
 
 use crate::{
     event::Event,
     layer::Layer,
+    resource::model::Model,
     world::{
         entity::Entity,
         scene::{MeshObject, Scene},
@@ -48,6 +49,7 @@ pub struct SceneLayer {
     render_pass: Arc<RenderPass>,
     scene_pool: CpuBufferPool<shader::scene_vs::ty::Scene_Data>,
     start_time: Instant,
+    dimensions: (f32, f32),
 
     // Dummy stuff
     scene: Scene,
@@ -59,6 +61,7 @@ impl SceneLayer {
         output_format: Format,
         swapchain_images: &Vec<Arc<ImageView<SwapchainImage<Window>>>>,
         viewport: Viewport,
+        dimensions: PhysicalSize<u32>,
     ) -> Self {
         let render_pass = vulkano::single_pass_renderpass!(
             gfx_queue.device().clone(),
@@ -85,61 +88,15 @@ impl SceneLayer {
 
         let mut scene = Scene::default();
 
-        let (triangle_mesh, triangle_init) = ImmutableBuffer::from_iter(
-            vec![
-                Vertex {
-                    v_position: Point3::new(-0.5, -0.5, 0.0),
-                },
-                Vertex {
-                    v_position: Point3::new(0.0, 0.5, 0.0),
-                },
-                Vertex {
-                    v_position: Point3::new(0.5, -0.5, 0.0),
-                },
-            ],
-            BufferUsage::vertex_buffer(),
-            gfx_queue.clone(),
-        )
-        .unwrap();
-        let (quad_mesh, quad_init) = ImmutableBuffer::from_iter(
-            vec![
-                Vertex {
-                    v_position: Point3::new(-0.5, -0.5, 0.0),
-                },
-                Vertex {
-                    v_position: Point3::new(0.5, -0.5, 0.0),
-                },
-                Vertex {
-                    v_position: Point3::new(0.5, 0.5, 0.0),
-                },
-                Vertex {
-                    v_position: Point3::new(0.5, 0.5, 0.0),
-                },
-                Vertex {
-                    v_position: Point3::new(-0.5, 0.5, 0.0),
-                },
-                Vertex {
-                    v_position: Point3::new(-0.5, -0.5, 0.0),
-                },
-            ],
-            BufferUsage::vertex_buffer(),
-            gfx_queue.clone(),
-        )
-        .unwrap();
+        let triangle_model = Arc::new(Model::triangle(gfx_queue.clone()));
+        let cube_model = Arc::new(Model::cube(gfx_queue.clone()));
 
-        triangle_init
-            .join(quad_init)
-            .then_signal_fence_and_flush()
-            .unwrap()
-            .wait(None)
-            .unwrap();
-
-        let mesh0 = MeshObject::new(gfx_queue.clone(), triangle_mesh.clone());
+        let mesh0 = MeshObject::new(gfx_queue.clone(), cube_model);
         scene
             .entities
             .push(Entity::new(Point3::new(0.0, 0.0, 0.0), Some(mesh0)));
 
-        let mesh1 = MeshObject::new(gfx_queue.clone(), quad_mesh.clone());
+        let mesh1 = MeshObject::new(gfx_queue.clone(), triangle_model);
         scene
             .entities
             .push(Entity::new(Point3::new(2.0, 0.0, 0.0), Some(mesh1)));
@@ -148,6 +105,8 @@ impl SceneLayer {
             CpuBufferPool::new(gfx_queue.device().clone(), BufferUsage::uniform_buffer());
 
         let start_time = Instant::now();
+
+        let dimensions = dimensions.into();
 
         Self {
             gfx_queue,
@@ -158,6 +117,7 @@ impl SceneLayer {
             framebuffers,
             scene_pool,
             start_time,
+            dimensions,
 
             scene,
         }
@@ -207,8 +167,8 @@ impl Layer for SceneLayer {
     fn on_detach(&mut self) {}
 
     fn on_event(&mut self, event: &Event, _: &mut ControlFlow) -> bool {
-        if let Event::SwapchainInvalidated(images, viewport) = event {
-            self.framebuffers = Self::create_framebuffers(&self.render_pass, images);
+        if let Event::SwapchainInvalidated { swapchain_images, viewport, dimensions } = event {
+            self.framebuffers = Self::create_framebuffers(&self.render_pass, swapchain_images);
             self.pipeline = Self::create_pipeline(
                 &self.gfx_queue,
                 &self.vs,
@@ -216,6 +176,7 @@ impl Layer for SceneLayer {
                 viewport.clone(),
                 self.render_pass.clone(),
             );
+            self.dimensions = dimensions.clone().into();
         }
 
         // TODO a way to send/receive events from other layers
@@ -242,7 +203,8 @@ impl Layer for SceneLayer {
                 &Point3::new(0.0, 0.0, 0.0),
                 &Vector3::new(0.0, 1.0, 0.0),
             );
-            let projection = Matrix4::new_perspective(1.0, 45.0, 0.01, 100.0);
+            let projection =
+                Matrix4::new_perspective(self.dimensions.0 / self.dimensions.1, 45.0, 0.01, 100.0);
 
             let data = shader::scene_vs::ty::Scene_Data {
                 projection: projection.into(),
@@ -295,16 +257,18 @@ impl Layer for SceneLayer {
                 )
                 .unwrap();
 
-                let vertex_buffer = mesh.mesh_data();
+                let model = mesh.model();
+                let model_data = model.data().unwrap();
+
                 builder
-                    .bind_vertex_buffers(0, vertex_buffer.clone())
+                    .bind_vertex_buffers(0, model_data.clone())
                     .bind_descriptor_sets(
                         PipelineBindPoint::Graphics,
                         self.pipeline.layout().clone(),
                         1,
                         model_set,
                     )
-                    .draw(vertex_buffer.len().try_into().unwrap(), 1, 0, 0)
+                    .draw(model_data.len().try_into().unwrap(), 1, 0, 0)
                     .unwrap();
             }
         }

@@ -7,10 +7,11 @@ use vulkano::{
 use winit::{dpi::PhysicalSize, event::WindowEvent, window::Window};
 
 pub enum Event<'a> {
-    SwapchainInvalidated(
-        &'a Vec<Arc<ImageView<SwapchainImage<Window>>>>,
-        Viewport,
-    ),
+    SwapchainInvalidated {
+        swapchain_images: &'a Vec<Arc<ImageView<SwapchainImage<Window>>>>,
+        viewport: Viewport,
+        dimensions: PhysicalSize<u32>
+    },
     WindowResized(PhysicalSize<u32>),
     WindowCloseRequested,
     // Required for egui-winit compat

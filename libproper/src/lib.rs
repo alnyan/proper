@@ -12,6 +12,7 @@ pub mod event;
 pub mod layer;
 pub mod render;
 pub mod world;
+pub mod resource;
 
 pub struct Application {
     event_loop: EventLoop<()>,
@@ -35,7 +36,8 @@ impl Application {
             render_context.gfx_queue().clone(),
             render_context.output_format(),
             render_context.swapchain_images(),
-            render_context.viewport().clone()
+            render_context.viewport().clone(),
+            render_context.dimensions(),
         ));
         layers.lock().unwrap().push(scene);
 

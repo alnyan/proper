@@ -112,6 +112,10 @@ impl VulkanContext {
         &self.viewport
     }
 
+    pub fn dimensions(&self) -> PhysicalSize<u32> {
+        self.surface.window().inner_size()
+    }
+
     pub fn output_format(&self) -> Format {
         self.swapchain_images[0].format().unwrap()
     }
@@ -122,10 +126,14 @@ impl VulkanContext {
 
     pub fn do_frame(&mut self, flow: &mut ControlFlow) {
         if self.need_swapchain_recreation {
-            self.recreate_swapchain();
+            let dimensions = self.recreate_swapchain();
 
             // TODO use some "event dispatcher" for that
-            let event = Event::SwapchainInvalidated(&self.swapchain_images, self.viewport.clone());
+            let event = Event::SwapchainInvalidated {
+                swapchain_images: &self.swapchain_images,
+                viewport: self.viewport.clone(),
+                dimensions
+            };
             for layer in self.layers.lock().unwrap().iter_mut() {
                 // Ignore hierarchy, this event needs to be delivered to every layer
                 layer.on_event(&event, flow);
