@@ -776,6 +776,7 @@ dependencies = [
  "egui_winit_vulkano",
  "log",
  "nalgebra",
+ "thiserror",
  "vulkano",
  "vulkano-shaders",
  "vulkano-win",

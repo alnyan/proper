@@ -10,7 +10,7 @@ pub enum Event<'a> {
     SwapchainInvalidated {
         swapchain_images: &'a Vec<Arc<ImageView<SwapchainImage<Window>>>>,
         viewport: Viewport,
-        dimensions: PhysicalSize<u32>
+        dimensions: PhysicalSize<u32>,
     },
     WindowResized(PhysicalSize<u32>),
     WindowCloseRequested,

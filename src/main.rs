@@ -13,6 +13,6 @@ fn main() {
     )];
     let _logger = CombinedLogger::init(loggers).ok();
 
-    let application = Application::new();
+    let application = Application::new().unwrap();
     application.run();
 }

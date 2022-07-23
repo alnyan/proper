@@ -19,7 +19,10 @@ use vulkano::{
     sync::GpuFuture,
 };
 
-use crate::render::{shader, Vertex};
+use crate::{
+    error::Error,
+    render::{shader, Vertex},
+};
 
 pub trait MaterialTemplate {
     fn recreate_pipeline(
@@ -27,14 +30,14 @@ pub trait MaterialTemplate {
         gfx_queue: &Arc<Queue>,
         render_pass: &Arc<RenderPass>,
         viewport: &Viewport,
-    );
+    ) -> Result<(), Error>;
 
     fn pipeline(&self) -> &Arc<GraphicsPipeline>;
     fn create_instance(
         &self,
         gfx_queue: Arc<Queue>,
         create_info: MaterialInstanceCreateInfo,
-    ) -> (MaterialInstance, Box<dyn GpuFuture>);
+    ) -> Result<(MaterialInstance, Box<dyn GpuFuture>), Error>;
 }
 
 // #[derive(Clone)]
@@ -58,28 +61,23 @@ pub struct MaterialInstance {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MaterialTemplateId(usize);
 
+#[derive(Default)]
 pub struct MaterialRegistry {
     data: Vec<Box<dyn MaterialTemplate>>,
     names: BTreeMap<String, MaterialTemplateId>,
 }
 
 impl MaterialRegistry {
-    pub fn new() -> Self {
-        Self {
-            data: vec![],
-            names: BTreeMap::new(),
-        }
-    }
-
     pub fn recreate_pipelines(
         &mut self,
         gfx_queue: &Arc<Queue>,
         render_pass: &Arc<RenderPass>,
         viewport: &Viewport,
-    ) {
+    ) -> Result<(), Error> {
         for mat in self.data.iter_mut() {
-            mat.recreate_pipeline(gfx_queue, render_pass, viewport);
+            mat.recreate_pipeline(gfx_queue, render_pass, viewport)?;
         }
+        Ok(())
     }
 
     pub fn add(&mut self, name: &str, mat: Box<dyn MaterialTemplate>) -> MaterialTemplateId {
@@ -129,12 +127,16 @@ pub struct SimpleMaterial {
 }
 
 impl SimpleMaterial {
-    pub fn new(gfx_queue: &Arc<Queue>, render_pass: &Arc<RenderPass>, viewport: &Viewport) -> Self {
-        let vs = shader::simple_vs::load(gfx_queue.device().clone()).unwrap();
-        let fs = shader::simple_fs::load(gfx_queue.device().clone()).unwrap();
-        let pipeline = Self::create_pipeline(gfx_queue, render_pass, viewport.clone(), &vs, &fs);
+    pub fn new(
+        gfx_queue: &Arc<Queue>,
+        render_pass: &Arc<RenderPass>,
+        viewport: &Viewport,
+    ) -> Result<Self, Error> {
+        let vs = shader::simple_vs::load(gfx_queue.device().clone())?;
+        let fs = shader::simple_fs::load(gfx_queue.device().clone())?;
+        let pipeline = Self::create_pipeline(gfx_queue, render_pass, viewport.clone(), &vs, &fs)?;
 
-        Self { pipeline, vs, fs }
+        Ok(Self { pipeline, vs, fs })
     }
 
     fn create_pipeline(
@@ -143,17 +145,25 @@ impl SimpleMaterial {
         viewport: Viewport,
         vs: &Arc<ShaderModule>,
         fs: &Arc<ShaderModule>,
-    ) -> Arc<GraphicsPipeline> {
+    ) -> Result<Arc<GraphicsPipeline>, Error> {
         GraphicsPipeline::start()
             .input_assembly_state(InputAssemblyState::new())
             .vertex_input_state(BuffersDefinition::new().vertex::<Vertex>())
-            .vertex_shader(vs.entry_point("main").unwrap(), ())
-            .fragment_shader(fs.entry_point("main").unwrap(), ())
+            .vertex_shader(
+                vs.entry_point("main")
+                    .ok_or(Error::MissingShaderEntryPoint)?,
+                (),
+            )
+            .fragment_shader(
+                fs.entry_point("main")
+                    .ok_or(Error::MissingShaderEntryPoint)?,
+                (),
+            )
             .depth_stencil_state(DepthStencilState::simple_depth_test())
             .viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
-            .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+            .render_pass(Subpass::from(render_pass.clone(), 0).ok_or(Error::MissingSubpass)?)
             .build(gfx_queue.device().clone())
-            .unwrap()
+            .map_err(Error::from)
     }
 }
 
@@ -163,39 +173,38 @@ impl MaterialTemplate for SimpleMaterial {
         gfx_queue: &Arc<Queue>,
         render_pass: &Arc<RenderPass>,
         viewport: &Viewport,
-    ) {
+    ) -> Result<(), Error> {
         self.pipeline =
-            Self::create_pipeline(gfx_queue, render_pass, viewport.clone(), &self.vs, &self.fs);
+            Self::create_pipeline(gfx_queue, render_pass, viewport.clone(), &self.vs, &self.fs)?;
+        Ok(())
     }
 
     fn create_instance(
         &self,
         gfx_queue: Arc<Queue>,
         create_info: MaterialInstanceCreateInfo,
-    ) -> (MaterialInstance, Box<dyn GpuFuture>) {
+    ) -> Result<(MaterialInstance, Box<dyn GpuFuture>), Error> {
         let (buffer, init) = ImmutableBuffer::from_data(
             shader::simple_fs::ty::Material_Data {
                 diffuse_color: *create_info.colors.get("diffuse_color").unwrap(),
             },
             BufferUsage::uniform_buffer(),
             gfx_queue,
-        )
-        .unwrap();
+        )?;
 
         let layout = self.pipeline.layout().set_layouts().get(1).unwrap();
         let material_set = PersistentDescriptorSet::new(
             layout.clone(),
             vec![WriteDescriptorSet::buffer(0, buffer)],
-        )
-        .unwrap();
+        )?;
 
-        (
+        Ok((
             MaterialInstance {
                 set_index: 1,
                 material_set,
             },
             Box::new(init),
-        )
+        ))
     }
 
     fn pipeline(&self) -> &Arc<GraphicsPipeline> {

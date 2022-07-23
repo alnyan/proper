@@ -9,6 +9,7 @@ use vulkano::{
 };
 
 use crate::{
+    error::Error,
     render::shader,
     resource::{
         material::{
@@ -20,6 +21,7 @@ use crate::{
 
 use super::entity::Entity;
 
+#[derive(Default)]
 pub struct Scene {
     // Renderable entities, sorted by material template
     data: Vec<MaterialEntityGroup>,
@@ -76,41 +78,31 @@ impl MaterialEntityGroup {
     }
 }
 
-impl Default for Scene {
-    fn default() -> Self {
-        Self { data: vec![] }
-    }
-}
-
 impl MeshObject {
     pub fn new(
         gfx_queue: Arc<Queue>,
         model: Arc<Model>,
         material_registry: &MaterialRegistry,
         material_instance_create_info: MaterialInstanceCreateInfo,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         let model_buffer = CpuAccessibleBuffer::from_data(
             gfx_queue.device().clone(),
             BufferUsage::uniform_buffer(),
             false,
             Zeroable::zeroed(),
-        )
-        .unwrap();
+        )?;
 
         let material_template = material_registry.get(model.material_template_id());
         let (material_instance, init) =
-            material_template.create_instance(gfx_queue, material_instance_create_info);
+            material_template.create_instance(gfx_queue, material_instance_create_info)?;
 
-        init.then_signal_fence_and_flush()
-            .unwrap()
-            .wait(None)
-            .unwrap();
+        init.then_signal_fence_and_flush()?.wait(None).unwrap();
 
-        Self {
+        Ok(Self {
             model,
             model_buffer,
             material_instance,
-        }
+        })
     }
 
     #[inline]
@@ -134,8 +126,9 @@ impl MeshObject {
         &self.material_instance
     }
 
-    pub fn update_transform(&mut self, transform: &Matrix4<f32>) {
-        let mut lock = self.model_buffer.write().unwrap();
+    pub fn update_transform(&mut self, transform: &Matrix4<f32>) -> Result<(), Error> {
+        let mut lock = self.model_buffer.write()?;
         lock.transform = *transform.as_ref();
+        Ok(())
     }
 }

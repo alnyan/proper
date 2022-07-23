@@ -28,6 +28,7 @@ use winit::{
 };
 
 use crate::{
+    error::Error,
     event::Event,
     layer::Layer,
     resource::{
@@ -41,6 +42,8 @@ use crate::{
 };
 
 use super::{frame::Frame, shader};
+
+type FramebufferCreateOutput = (Vec<Arc<Framebuffer>>, Arc<ImageView<AttachmentImage>>);
 
 pub struct SceneLayer {
     gfx_queue: Arc<Queue>,
@@ -64,7 +67,7 @@ impl SceneLayer {
         swapchain_images: &Vec<Arc<ImageView<SwapchainImage<Window>>>>,
         viewport: Viewport,
         dimensions: PhysicalSize<u32>,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         let render_pass = vulkano::single_pass_renderpass!(
             gfx_queue.device().clone(),
             attachments: {
@@ -85,23 +88,22 @@ impl SceneLayer {
                 color: [color],
                 depth_stencil: {depth}
             }
-        )
-        .unwrap();
+        )?;
 
         let (framebuffers, depth_view) =
-            Self::create_framebuffers(gfx_queue.device().clone(), &render_pass, swapchain_images);
+            Self::create_framebuffers(gfx_queue.device().clone(), &render_pass, swapchain_images)?;
 
-        let mut material_registry = MaterialRegistry::new();
+        let mut material_registry = MaterialRegistry::default();
 
         let mat_simple_id = material_registry.add(
             "simple",
-            Box::new(SimpleMaterial::new(&gfx_queue, &render_pass, &viewport)),
+            Box::new(SimpleMaterial::new(&gfx_queue, &render_pass, &viewport)?),
         );
 
         let mut scene = Scene::default();
 
-        let triangle_model = Arc::new(Model::triangle(gfx_queue.clone(), mat_simple_id));
-        let cube_model = Arc::new(Model::cube(gfx_queue.clone(), mat_simple_id));
+        let triangle_model = Arc::new(Model::triangle(gfx_queue.clone(), mat_simple_id)?);
+        let cube_model = Arc::new(Model::cube(gfx_queue.clone(), mat_simple_id)?);
 
         const SIZE: i32 = 4;
         for x in -SIZE..=SIZE {
@@ -122,17 +124,17 @@ impl SceneLayer {
                         triangle_model.clone(),
                         &material_registry,
                         create_info.clone(),
-                    )
+                    )?
                 } else {
                     MeshObject::new(
                         gfx_queue.clone(),
                         cube_model.clone(),
                         &material_registry,
                         create_info.clone(),
-                    )
+                    )?
                 };
 
-                let entity = Entity::new(Point3::new(x as f32, 0.0, y as f32), Some(mesh));
+                let entity = Entity::new(Point3::new(x as f32, 0.0, y as f32), Some(mesh))?;
 
                 scene.add(entity);
             }
@@ -146,10 +148,14 @@ impl SceneLayer {
         let dimensions = dimensions.into();
 
         // Have to load these in order to access DescriptorRequirements
-        let dummy_vs = shader::simple_vs::load(gfx_queue.device().clone()).unwrap();
-        let dummy_vs_entry = dummy_vs.entry_point("main").unwrap();
-        let dummy_fs = shader::simple_fs::load(gfx_queue.device().clone()).unwrap();
-        let dummy_fs_entry = dummy_fs.entry_point("main").unwrap();
+        let dummy_vs = shader::simple_vs::load(gfx_queue.device().clone())?;
+        let dummy_vs_entry = dummy_vs
+            .entry_point("main")
+            .ok_or(Error::MissingShaderEntryPoint)?;
+        let dummy_fs = shader::simple_fs::load(gfx_queue.device().clone())?;
+        let dummy_fs_entry = dummy_fs
+            .entry_point("main")
+            .ok_or(Error::MissingShaderEntryPoint)?;
 
         let descriptor_set_layout_create_infos = DescriptorSetLayoutCreateInfo::from_requirements(
             dummy_vs_entry
@@ -163,8 +169,10 @@ impl SceneLayer {
         );
         let descriptor_set_layouts = descriptor_set_layout_create_infos
             .into_iter()
-            .map(|info| DescriptorSetLayout::new(gfx_queue.device().clone(), info).unwrap())
-            .collect();
+            .map(|info| {
+                DescriptorSetLayout::new(gfx_queue.device().clone(), info).map_err(Error::from)
+            })
+            .collect::<Result<_, _>>()?;
         let common_pipeline_layout = PipelineLayout::new(
             gfx_queue.device().clone(),
             PipelineLayoutCreateInfo {
@@ -172,10 +180,9 @@ impl SceneLayer {
                 push_constant_ranges: vec![],
                 ..Default::default()
             },
-        )
-        .unwrap();
+        )?;
 
-        Self {
+        Ok(Self {
             gfx_queue,
             render_pass,
             framebuffers,
@@ -187,25 +194,21 @@ impl SceneLayer {
             material_registry,
             scene,
             common_pipeline_layout,
-        }
+        })
     }
 
     fn create_framebuffers(
         device: Arc<Device>,
         render_pass: &Arc<RenderPass>,
         swapchain_images: &Vec<Arc<ImageView<SwapchainImage<Window>>>>,
-    ) -> (Vec<Arc<Framebuffer>>, Arc<ImageView<AttachmentImage>>) {
-        let depth_view = ImageView::new_default(
-            AttachmentImage::transient(
-                device,
-                swapchain_images[0].dimensions().width_height(),
-                Format::D16_UNORM,
-            )
-            .unwrap(),
-        )
-        .unwrap();
+    ) -> Result<FramebufferCreateOutput, Error> {
+        let depth_view = ImageView::new_default(AttachmentImage::transient(
+            device,
+            swapchain_images[0].dimensions().width_height(),
+            Format::D16_UNORM,
+        )?)?;
 
-        (
+        Ok((
             swapchain_images
                 .into_iter()
                 .map(|image| {
@@ -216,11 +219,11 @@ impl SceneLayer {
                             ..Default::default()
                         },
                     )
-                    .unwrap()
                 })
-                .collect(),
+                .collect::<Result<_, _>>()
+                .map_err(Error::from)?,
             depth_view,
-        )
+        ))
     }
 }
 
@@ -229,7 +232,7 @@ impl Layer for SceneLayer {
 
     fn on_detach(&mut self) {}
 
-    fn on_event(&mut self, event: &Event, _: &mut ControlFlow) -> bool {
+    fn on_event(&mut self, event: &Event, _: &mut ControlFlow) -> Result<bool, Error> {
         if let Event::SwapchainInvalidated {
             swapchain_images,
             viewport,
@@ -240,11 +243,14 @@ impl Layer for SceneLayer {
                 self.gfx_queue.device().clone(),
                 &self.render_pass,
                 swapchain_images,
-            );
+            )?;
             self.dimensions = (*dimensions).into();
 
-            self.material_registry
-                .recreate_pipelines(&self.gfx_queue, &self.render_pass, viewport);
+            self.material_registry.recreate_pipelines(
+                &self.gfx_queue,
+                &self.render_pass,
+                viewport,
+            )?;
         }
 
         // TODO a way to send/receive events from other layers
@@ -257,10 +263,14 @@ impl Layer for SceneLayer {
             todo!()
         }
 
-        false
+        Ok(false)
     }
 
-    fn on_draw(&mut self, in_future: Box<dyn GpuFuture>, frame: &Frame) -> Box<dyn GpuFuture> {
+    fn on_draw(
+        &mut self,
+        in_future: Box<dyn GpuFuture>,
+        frame: &Frame,
+    ) -> Result<Box<dyn GpuFuture>, Error> {
         let t0 = Instant::now();
         let scene_subbuffer = {
             let now = Instant::now();
@@ -281,7 +291,7 @@ impl Layer for SceneLayer {
                 view: view.into(),
             };
 
-            self.scene_pool.next(data).unwrap()
+            self.scene_pool.next(data)?
         };
 
         let scene_layout = self.common_pipeline_layout.set_layouts().get(0).unwrap();
@@ -290,15 +300,13 @@ impl Layer for SceneLayer {
         let scene_set = PersistentDescriptorSet::new(
             scene_layout.clone(),
             vec![WriteDescriptorSet::buffer(0, scene_subbuffer)],
-        )
-        .unwrap();
+        )?;
 
         let mut builder = AutoCommandBufferBuilder::primary(
             self.gfx_queue.device().clone(),
             self.gfx_queue.family(),
             CommandBufferUsage::OneTimeSubmit,
-        )
-        .unwrap();
+        )?;
 
         let framebuffer = self.framebuffers[frame.image_index].clone();
 
@@ -312,8 +320,7 @@ impl Layer for SceneLayer {
             .push(Some(ClearValue::Depth(1.0)));
 
         builder
-            .begin_render_pass(render_pass_begin_info, SubpassContents::Inline)
-            .unwrap()
+            .begin_render_pass(render_pass_begin_info, SubpassContents::Inline)?
             .bind_descriptor_sets(
                 PipelineBindPoint::Graphics,
                 self.common_pipeline_layout.clone(),
@@ -333,8 +340,7 @@ impl Layer for SceneLayer {
                     let model_set = PersistentDescriptorSet::new(
                         model_layout.clone(),
                         vec![WriteDescriptorSet::buffer(0, mesh.model_buffer().clone())],
-                    )
-                    .unwrap();
+                    )?;
 
                     let model = mesh.model();
                     let model_data = model.data().unwrap();
@@ -349,22 +355,18 @@ impl Layer for SceneLayer {
                             2,
                             model_set,
                         )
-                        .draw(model_data.len().try_into().unwrap(), 1, 0, 0)
-                        .unwrap();
+                        .draw(model_data.len().try_into().unwrap(), 1, 0, 0)?;
                 }
             }
         }
 
-        builder.end_render_pass().unwrap();
+        builder.end_render_pass()?;
 
-        let cb = builder.build().unwrap();
+        let cb = builder.build()?;
 
         let t1 = Instant::now();
         log::debug!("Command buffer build: {:?}", t1 - t0);
 
-        in_future
-            .then_execute(self.gfx_queue.clone(), cb)
-            .unwrap()
-            .boxed()
+        Ok(in_future.then_execute(self.gfx_queue.clone(), cb)?.boxed())
     }
 }

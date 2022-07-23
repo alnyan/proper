@@ -1,24 +1,23 @@
 use nalgebra::{Matrix4, Point3, Vector3};
 
+use crate::error::Error;
+
 use super::scene::MeshObject;
 
 pub struct Entity {
     position: Point3<f32>,
-    mesh: Option<MeshObject>
+    mesh: Option<MeshObject>,
 }
 
 impl Entity {
-    pub fn new(position: Point3<f32>, mut mesh: Option<MeshObject>) -> Self {
+    pub fn new(position: Point3<f32>, mut mesh: Option<MeshObject>) -> Result<Self, Error> {
         let transform = Self::create_transform(Vector3::new(position.x, position.y, position.z));
 
         if let Some(mesh) = mesh.as_mut() {
-            mesh.update_transform(&transform);
+            mesh.update_transform(&transform)?;
         }
 
-        Self {
-            position,
-            mesh
-        }
+        Ok(Self { position, mesh })
     }
 
     #[inline]

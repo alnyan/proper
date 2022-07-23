@@ -4,7 +4,7 @@ use egui_winit_vulkano::{egui, Gui};
 use vulkano::{device::Queue, swapchain::Surface, sync::GpuFuture};
 use winit::{event_loop::ControlFlow, window::Window};
 
-use crate::{event::Event, layer::Layer};
+use crate::{error::Error, event::Event, layer::Layer};
 
 use super::frame::Frame;
 
@@ -24,15 +24,19 @@ impl Layer for GuiLayer {
 
     fn on_detach(&mut self) {}
 
-    fn on_event(&mut self, event: &Event, _: &mut ControlFlow) -> bool {
+    fn on_event(&mut self, event: &Event, _: &mut ControlFlow) -> Result<bool, Error> {
         if let Event::WindowEventWrapped(event) = event {
-            self.inner.update(event)
+            Ok(self.inner.update(event))
         } else {
-            false
+            Ok(false)
         }
     }
 
-    fn on_draw(&mut self, in_future: Box<dyn GpuFuture>, frame: &Frame) -> Box<dyn GpuFuture> {
+    fn on_draw(
+        &mut self,
+        in_future: Box<dyn GpuFuture>,
+        frame: &Frame,
+    ) -> Result<Box<dyn GpuFuture>, Error> {
         self.inner.immediate_ui(|gui| {
             let ctx = gui.context();
 
@@ -46,7 +50,8 @@ impl Layer for GuiLayer {
                 });
         });
 
-        self.inner
-            .draw_on_image(in_future, frame.destination.clone())
+        Ok(self
+            .inner
+            .draw_on_image(in_future, frame.destination.clone()))
     }
 }

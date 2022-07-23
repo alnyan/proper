@@ -10,7 +10,7 @@ pub mod shader;
 #[repr(C)]
 #[derive(Default, Clone, Copy, Zeroable, Pod)]
 pub struct Vertex {
-    pub v_position: Point3<f32>
+    pub v_position: Point3<f32>,
 }
 
 vulkano::impl_vertex!(Vertex, v_position);

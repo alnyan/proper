@@ -3,7 +3,7 @@ use std::sync::Arc;
 use vulkano::{
     device::Queue,
     image::{view::ImageView, SwapchainImage},
-    pipeline::graphics::viewport::Viewport
+    pipeline::graphics::viewport::Viewport,
 };
 use winit::window::Window;
 
