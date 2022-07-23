@@ -6,11 +6,17 @@ use vulkano::{
     command_buffer::{
         AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
     },
-    descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
+    descriptor_set::{
+        layout::{DescriptorSetLayout, DescriptorSetLayoutCreateInfo},
+        PersistentDescriptorSet, WriteDescriptorSet,
+    },
     device::{Device, Queue},
     format::{ClearValue, Format},
     image::{view::ImageView, AttachmentImage, ImageViewAbstract, SwapchainImage},
-    pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint},
+    pipeline::{
+        graphics::viewport::Viewport, layout::PipelineLayoutCreateInfo, Pipeline,
+        PipelineBindPoint, PipelineLayout,
+    },
     render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass},
     sync::GpuFuture,
 };
@@ -46,6 +52,7 @@ pub struct SceneLayer {
     dimensions: (f32, f32),
 
     // Dummy stuff
+    common_pipeline_layout: Arc<PipelineLayout>,
     scene: Scene,
     material_registry: MaterialRegistry,
 }
@@ -96,15 +103,15 @@ impl SceneLayer {
         let triangle_model = Arc::new(Model::triangle(gfx_queue.clone(), mat_simple_id));
         let cube_model = Arc::new(Model::cube(gfx_queue.clone(), mat_simple_id));
 
-        const SIZE: i32 = 3;
+        const SIZE: i32 = 4;
         for x in -SIZE..=SIZE {
             for y in -SIZE..=SIZE {
                 let create_info = MaterialInstanceCreateInfo::default().with_color(
                     "diffuse_color",
                     [
-                        (x + 3) as f32 / (SIZE * 2 + 1) as f32,
+                        (x + SIZE) as f32 / (SIZE * 2 + 1) as f32,
                         0.0,
-                        (y + 3) as f32 / (SIZE * 2 + 1) as f32,
+                        (y + SIZE) as f32 / (SIZE * 2 + 1) as f32,
                         1.0,
                     ],
                 );
@@ -138,6 +145,36 @@ impl SceneLayer {
 
         let dimensions = dimensions.into();
 
+        // Have to load these in order to access DescriptorRequirements
+        let dummy_vs = shader::simple_vs::load(gfx_queue.device().clone()).unwrap();
+        let dummy_vs_entry = dummy_vs.entry_point("main").unwrap();
+        let dummy_fs = shader::simple_fs::load(gfx_queue.device().clone()).unwrap();
+        let dummy_fs_entry = dummy_fs.entry_point("main").unwrap();
+
+        let descriptor_set_layout_create_infos = DescriptorSetLayoutCreateInfo::from_requirements(
+            dummy_vs_entry
+                .descriptor_requirements()
+                .filter(|((set, _), _)| *set != 1)
+                .chain(
+                    dummy_fs_entry
+                        .descriptor_requirements()
+                        .filter(|((set, _), _)| *set != 1),
+                ),
+        );
+        let descriptor_set_layouts = descriptor_set_layout_create_infos
+            .into_iter()
+            .map(|info| DescriptorSetLayout::new(gfx_queue.device().clone(), info).unwrap())
+            .collect();
+        let common_pipeline_layout = PipelineLayout::new(
+            gfx_queue.device().clone(),
+            PipelineLayoutCreateInfo {
+                set_layouts: descriptor_set_layouts,
+                push_constant_ranges: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
         Self {
             gfx_queue,
             render_pass,
@@ -149,6 +186,7 @@ impl SceneLayer {
 
             material_registry,
             scene,
+            common_pipeline_layout,
         }
     }
 
@@ -203,7 +241,7 @@ impl Layer for SceneLayer {
                 &self.render_pass,
                 swapchain_images,
             );
-            self.dimensions = dimensions.clone().into();
+            self.dimensions = (*dimensions).into();
 
             self.material_registry
                 .recreate_pipelines(&self.gfx_queue, &self.render_pass, viewport);
@@ -246,6 +284,15 @@ impl Layer for SceneLayer {
             self.scene_pool.next(data).unwrap()
         };
 
+        let scene_layout = self.common_pipeline_layout.set_layouts().get(0).unwrap();
+        let model_layout = self.common_pipeline_layout.set_layouts().get(2).unwrap();
+
+        let scene_set = PersistentDescriptorSet::new(
+            scene_layout.clone(),
+            vec![WriteDescriptorSet::buffer(0, scene_subbuffer)],
+        )
+        .unwrap();
+
         let mut builder = AutoCommandBufferBuilder::primary(
             self.gfx_queue.device().clone(),
             self.gfx_queue.family(),
@@ -266,30 +313,20 @@ impl Layer for SceneLayer {
 
         builder
             .begin_render_pass(render_pass_begin_info, SubpassContents::Inline)
-            .unwrap();
+            .unwrap()
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                self.common_pipeline_layout.clone(),
+                0,
+                scene_set,
+            );
 
         for group in self.scene.iter() {
             let material_template = self.material_registry.get(group.material_template_id());
             let pipeline = material_template.pipeline();
 
-            let scene_layout = pipeline.layout().set_layouts().get(0).unwrap();
-            let model_layout = pipeline.layout().set_layouts().get(2).unwrap();
-
-            let scene_set = PersistentDescriptorSet::new(
-                scene_layout.clone(),
-                vec![WriteDescriptorSet::buffer(0, scene_subbuffer.clone())],
-            )
-            .unwrap();
-
             // Bind template
-            builder
-                .bind_pipeline_graphics(pipeline.clone())
-                .bind_descriptor_sets(
-                    PipelineBindPoint::Graphics,
-                    pipeline.layout().clone(),
-                    0,
-                    scene_set,
-                );
+            builder.bind_pipeline_graphics(pipeline.clone());
 
             for object in group.iter() {
                 if let Some(mesh) = object.mesh() {

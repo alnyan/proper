@@ -331,6 +331,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "coz"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cef55b3fe2f5477d59e12bc792e8b3c95a25bd099eadcfae006ecea136de76e2"
+dependencies = [
+ "libc",
+ "once_cell",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -494,8 +504,8 @@ dependencies = [
 
 [[package]]
 name = "egui_winit_vulkano"
-version = "0.17.0"
-source = "git+https://github.com/alnyan/egui_winit_vulkano?branch=fix-issue-16#5b8b7e30874ef5c0d59e5710761640d14a710d4c"
+version = "0.18.0"
+source = "git+https://github.com/hakolao/egui_winit_vulkano#a86c989139088a77f842658903720f63823d97fc"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -762,6 +772,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
+ "coz",
  "egui_winit_vulkano",
  "log",
  "nalgebra",
@@ -1313,11 +1324,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rangemap"
-version = "1.0.1"
-source = "git+https://github.com/vulkano-rs/rangemap?branch=range-split#5a3a4c7741b6c1f432ce5758f3fb82f7daead812"
-
-[[package]]
 name = "raw-window-handle"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1743,8 +1749,9 @@ dependencies = [
 
 [[package]]
 name = "vulkano"
-version = "0.29.0"
-source = "git+https://github.com/vulkano-rs/vulkano#6d9744cf94e8dc3c10e2c6ed016c932ff04d55df"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0163f8682a801d6eb1dcb0a4235f82e24646e3f2786a415af4eb9b214e130bec"
 dependencies = [
  "ash",
  "bytemuck",
@@ -1757,7 +1764,6 @@ dependencies = [
  "parking_lot 0.12.1",
  "proc-macro2",
  "quote",
- "rangemap",
  "regex",
  "serde",
  "serde_json",
@@ -1768,8 +1774,9 @@ dependencies = [
 
 [[package]]
 name = "vulkano-shaders"
-version = "0.29.0"
-source = "git+https://github.com/vulkano-rs/vulkano#6d9744cf94e8dc3c10e2c6ed016c932ff04d55df"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3104d81c059a37a188d5cd30f45268e57dbe782008043648d85a7e831f3f5a13"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -1781,8 +1788,9 @@ dependencies = [
 
 [[package]]
 name = "vulkano-win"
-version = "0.29.0"
-source = "git+https://github.com/vulkano-rs/vulkano#6d9744cf94e8dc3c10e2c6ed016c932ff04d55df"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "031a2b6cef901941362d8461fe3d513320937bdbeb3125f2029c4017c597a07f"
 dependencies = [
  "cocoa",
  "metal",

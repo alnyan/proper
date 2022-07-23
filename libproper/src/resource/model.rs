@@ -61,10 +61,12 @@ impl Model {
         }
     }
 
+    #[inline]
     pub const fn is_loaded(&self) -> bool {
         matches!(self.data, Storage::Device(_))
     }
 
+    #[inline]
     pub const fn data(&self) -> Option<&Arc<ImmutableBuffer<[Vertex]>>> {
         if let Storage::Device(data) = &self.data {
             Some(data)
@@ -73,6 +75,7 @@ impl Model {
         }
     }
 
+    #[inline]
     pub const fn material_template_id(&self) -> MaterialTemplateId {
         self.material_template_id
     }

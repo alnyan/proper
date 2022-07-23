@@ -21,10 +21,12 @@ impl Entity {
         }
     }
 
+    #[inline]
     pub const fn position(&self) -> &Point3<f32> {
         &self.position
     }
 
+    #[inline]
     pub const fn mesh(&self) -> Option<&MeshObject> {
         self.mesh.as_ref()
     }

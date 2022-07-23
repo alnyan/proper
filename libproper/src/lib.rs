@@ -1,3 +1,5 @@
+#![allow(clippy::into_iter_on_ref)]
+
 use std::sync::{Arc, Mutex};
 
 use event::Event;

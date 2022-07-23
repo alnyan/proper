@@ -1,4 +1,5 @@
 #![allow(non_camel_case_types)]
+#![allow(clippy::needless_question_mark)]
 
 pub mod simple_vs {
     vulkano_shaders::shader! {

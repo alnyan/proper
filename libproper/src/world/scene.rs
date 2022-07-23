@@ -37,9 +37,11 @@ pub struct MeshObject {
 }
 
 impl Scene {
+    #[inline]
     pub fn iter(&self) -> impl Iterator<Item = &MaterialEntityGroup> {
         self.data.iter()
     }
+    #[inline]
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut MaterialEntityGroup> {
         self.data.iter_mut()
     }
@@ -63,10 +65,12 @@ impl Scene {
 }
 
 impl MaterialEntityGroup {
+    #[inline]
     pub fn iter(&self) -> impl Iterator<Item = &Entity> {
         self.entities.iter()
     }
 
+    #[inline]
     pub const fn material_template_id(&self) -> MaterialTemplateId {
         self.material_template_id
     }
@@ -109,10 +113,12 @@ impl MeshObject {
         }
     }
 
+    #[inline]
     pub const fn model(&self) -> &Arc<Model> {
         &self.model
     }
 
+    #[inline]
     pub const fn model_buffer(
         &self,
     ) -> &Arc<CpuAccessibleBuffer<shader::simple_vs::ty::Model_Data>> {
@@ -130,6 +136,6 @@ impl MeshObject {
 
     pub fn update_transform(&mut self, transform: &Matrix4<f32>) {
         let mut lock = self.model_buffer.write().unwrap();
-        lock.transform = transform.as_ref().clone();
+        lock.transform = *transform.as_ref();
     }
 }

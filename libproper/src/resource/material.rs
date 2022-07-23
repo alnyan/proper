@@ -1,12 +1,10 @@
-use std::{collections::BTreeMap, mem::MaybeUninit, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
-use nalgebra::Point4;
 use vulkano::{
     buffer::{BufferUsage, ImmutableBuffer},
-    command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, PrimaryCommandBuffer},
+    command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer},
     descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
-    device::{Device, Queue},
-    image::{view::ImageView, ImmutableImage},
+    device::Queue,
     pipeline::{
         graphics::{
             depth_stencil::DepthStencilState,
@@ -17,7 +15,6 @@ use vulkano::{
         GraphicsPipeline, Pipeline, PipelineBindPoint,
     },
     render_pass::{RenderPass, Subpass},
-    sampler::Sampler,
     shader::ShaderModule,
     sync::GpuFuture,
 };
@@ -40,15 +37,15 @@ pub trait MaterialTemplate {
     ) -> (MaterialInstance, Box<dyn GpuFuture>);
 }
 
-#[derive(Clone)]
-pub struct SampledImage {
-    image: Arc<ImageView<ImmutableImage>>,
-    sampler: Arc<Sampler>,
-}
+// #[derive(Clone)]
+// pub struct SampledImage {
+//     image: Arc<ImageView<ImmutableImage>>,
+//     sampler: Arc<Sampler>,
+// }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MaterialInstanceCreateInfo {
-    textures: BTreeMap<String, SampledImage>,
+    // textures: BTreeMap<String, SampledImage>,
     colors: BTreeMap<String, [f32; 4]>,
 }
 
@@ -96,8 +93,8 @@ impl MaterialRegistry {
         self.names.get(name).cloned()
     }
 
-    pub fn get(&self, id: MaterialTemplateId) -> &Box<dyn MaterialTemplate> {
-        &self.data[id.0]
+    pub fn get(&self, id: MaterialTemplateId) -> &dyn MaterialTemplate {
+        self.data[id.0].as_ref()
     }
 }
 
@@ -120,15 +117,6 @@ impl MaterialInstanceCreateInfo {
     pub fn with_color(mut self, name: &str, color: [f32; 4]) -> Self {
         self.colors.insert(name.to_owned(), color);
         self
-    }
-}
-
-impl Default for MaterialInstanceCreateInfo {
-    fn default() -> Self {
-        Self {
-            textures: BTreeMap::new(),
-            colors: BTreeMap::new(),
-        }
     }
 }
 

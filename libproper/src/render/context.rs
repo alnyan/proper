@@ -6,7 +6,7 @@ use vulkano::{
         Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo,
     },
     format::Format,
-    image::{view::ImageView, ImageUsage, ImageViewAbstract, SwapchainImage},
+    image::{view::ImageView, ImageUsage, SwapchainImage},
     instance::{Instance, InstanceCreateInfo},
     pipeline::graphics::viewport::Viewport,
     swapchain::{self, Surface, Swapchain, SwapchainCreateInfo},
@@ -30,6 +30,7 @@ pub struct VulkanContext {
     device: Arc<Device>,
     queue: Arc<Queue>,
 
+    format: Format,
     swapchain: Arc<Swapchain<Window>>,
     swapchain_images: Vec<Arc<ImageView<SwapchainImage<Window>>>>,
     viewport: Viewport,
@@ -63,6 +64,8 @@ impl VulkanContext {
             .build_vk_surface(event_loop, instance.clone())
             .unwrap();
 
+        let format = Format::B8G8R8A8_SRGB;
+
         let (physical, queue_family) = Self::select_physical_device(&instance, &surface);
 
         let (device, mut queues) = Device::new(
@@ -78,7 +81,7 @@ impl VulkanContext {
         .unwrap();
         let queue = queues.next().unwrap();
 
-        let (swapchain, swapchain_images) = Self::create_swapchain(device.clone(), surface.clone());
+        let (swapchain, swapchain_images) = Self::create_swapchain(device.clone(), surface.clone(), format);
 
         let viewport = Self::create_viewport(&surface);
 
@@ -92,6 +95,7 @@ impl VulkanContext {
             swapchain_images,
             viewport,
             layers,
+            format,
             need_swapchain_recreation: false,
         }
     }
@@ -117,7 +121,7 @@ impl VulkanContext {
     }
 
     pub fn output_format(&self) -> Format {
-        self.swapchain_images[0].format().unwrap()
+        self.format
     }
 
     pub fn invalidate_surface(&mut self) {
@@ -213,6 +217,7 @@ impl VulkanContext {
     fn create_swapchain(
         device: Arc<Device>,
         surface: Arc<Surface<Window>>,
+        format: Format,
     ) -> (
         Arc<Swapchain<Window>>,
         Vec<Arc<ImageView<SwapchainImage<Window>>>>,
@@ -221,13 +226,8 @@ impl VulkanContext {
             .physical_device()
             .surface_capabilities(&surface, Default::default())
             .unwrap();
-        let image_format = Some(
-            device
-                .physical_device()
-                .surface_formats(&surface, Default::default())
-                .unwrap()[0]
-                .0,
-        );
+
+        let image_format = Some(format);
 
         let (swapchain, images) = Swapchain::new(
             device,
