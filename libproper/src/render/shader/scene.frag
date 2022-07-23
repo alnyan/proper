@@ -1,9 +1,11 @@
 #version 450
 
-layout(location = 0) in vec3 m_position;
-
 layout(location = 0) out vec4 f_color;
 
+layout(set = 1, binding = 0) uniform Material_Data {
+    vec4 diffuse_color;
+} mat;
+
 void main() {
-    f_color = vec4(m_position, 1.0);
+    f_color = mat.diffuse_color;
 }

@@ -1,6 +1,6 @@
 #![allow(non_camel_case_types)]
 
-pub mod scene_vs {
+pub mod simple_vs {
     vulkano_shaders::shader! {
         ty: "vertex",
         path: "src/render/shader/scene.vert",
@@ -11,9 +11,13 @@ pub mod scene_vs {
     }
 }
 
-pub mod scene_fs {
+pub mod simple_fs {
     vulkano_shaders::shader! {
         ty: "fragment",
-        path: "src/render/shader/scene.frag"
+        path: "src/render/shader/scene.frag",
+        types_meta: {
+            use bytemuck::{Pod, Zeroable};
+            #[derive(Clone, Copy, Pod, Zeroable)]
+        }
     }
 }

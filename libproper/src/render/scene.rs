@@ -10,17 +10,8 @@ use vulkano::{
     device::{Device, Queue},
     format::{ClearValue, Format},
     image::{view::ImageView, AttachmentImage, ImageViewAbstract, SwapchainImage},
-    pipeline::{
-        graphics::{
-            depth_stencil::DepthStencilState,
-            input_assembly::InputAssemblyState,
-            vertex_input::BuffersDefinition,
-            viewport::{Viewport, ViewportState},
-        },
-        GraphicsPipeline, Pipeline, PipelineBindPoint,
-    },
-    render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass},
-    shader::ShaderModule,
+    pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint},
+    render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass},
     sync::GpuFuture,
 };
 use winit::{
@@ -33,29 +24,30 @@ use winit::{
 use crate::{
     event::Event,
     layer::Layer,
-    resource::model::Model,
+    resource::{
+        material::{MaterialInstanceCreateInfo, MaterialRegistry, SimpleMaterial},
+        model::Model,
+    },
     world::{
         entity::Entity,
         scene::{MeshObject, Scene},
     },
 };
 
-use super::{frame::Frame, shader, Vertex};
+use super::{frame::Frame, shader};
 
 pub struct SceneLayer {
     gfx_queue: Arc<Queue>,
-    vs: Arc<ShaderModule>,
-    fs: Arc<ShaderModule>,
-    pipeline: Arc<GraphicsPipeline>,
     framebuffers: Vec<Arc<Framebuffer>>,
     depth_view: Arc<ImageView<AttachmentImage>>,
     render_pass: Arc<RenderPass>,
-    scene_pool: CpuBufferPool<shader::scene_vs::ty::Scene_Data>,
+    scene_pool: CpuBufferPool<shader::simple_vs::ty::Scene_Data>,
     start_time: Instant,
     dimensions: (f32, f32),
 
     // Dummy stuff
     scene: Scene,
+    material_registry: MaterialRegistry,
 }
 
 impl SceneLayer {
@@ -89,27 +81,55 @@ impl SceneLayer {
         )
         .unwrap();
 
-        let vs = shader::scene_vs::load(gfx_queue.device().clone()).unwrap();
-        let fs = shader::scene_fs::load(gfx_queue.device().clone()).unwrap();
-
-        let pipeline = Self::create_pipeline(&gfx_queue, &vs, &fs, viewport, render_pass.clone());
         let (framebuffers, depth_view) =
             Self::create_framebuffers(gfx_queue.device().clone(), &render_pass, swapchain_images);
 
+        let mut material_registry = MaterialRegistry::new();
+
+        let mat_simple_id = material_registry.add(
+            "simple",
+            Box::new(SimpleMaterial::new(&gfx_queue, &render_pass, &viewport)),
+        );
+
         let mut scene = Scene::default();
 
-        let triangle_model = Arc::new(Model::triangle(gfx_queue.clone()));
-        let cube_model = Arc::new(Model::cube(gfx_queue.clone()));
+        let triangle_model = Arc::new(Model::triangle(gfx_queue.clone(), mat_simple_id));
+        let cube_model = Arc::new(Model::cube(gfx_queue.clone(), mat_simple_id));
 
-        let mesh0 = MeshObject::new(gfx_queue.clone(), cube_model);
-        scene
-            .entities
-            .push(Entity::new(Point3::new(0.0, 0.0, 0.0), Some(mesh0)));
+        const SIZE: i32 = 3;
+        for x in -SIZE..=SIZE {
+            for y in -SIZE..=SIZE {
+                let create_info = MaterialInstanceCreateInfo::default().with_color(
+                    "diffuse_color",
+                    [
+                        (x + 3) as f32 / (SIZE * 2 + 1) as f32,
+                        0.0,
+                        (y + 3) as f32 / (SIZE * 2 + 1) as f32,
+                        1.0,
+                    ],
+                );
 
-        let mesh1 = MeshObject::new(gfx_queue.clone(), triangle_model);
-        scene
-            .entities
-            .push(Entity::new(Point3::new(2.0, 0.0, 0.0), Some(mesh1)));
+                let mesh = if (x + y) % 2 == 0 {
+                    MeshObject::new(
+                        gfx_queue.clone(),
+                        triangle_model.clone(),
+                        &material_registry,
+                        create_info.clone(),
+                    )
+                } else {
+                    MeshObject::new(
+                        gfx_queue.clone(),
+                        cube_model.clone(),
+                        &material_registry,
+                        create_info.clone(),
+                    )
+                };
+
+                let entity = Entity::new(Point3::new(x as f32, 0.0, y as f32), Some(mesh));
+
+                scene.add(entity);
+            }
+        }
 
         let scene_pool =
             CpuBufferPool::new(gfx_queue.device().clone(), BufferUsage::uniform_buffer());
@@ -121,36 +141,15 @@ impl SceneLayer {
         Self {
             gfx_queue,
             render_pass,
-            vs,
-            fs,
-            pipeline,
             framebuffers,
             depth_view,
             scene_pool,
             start_time,
             dimensions,
 
+            material_registry,
             scene,
         }
-    }
-
-    fn create_pipeline(
-        gfx_queue: &Arc<Queue>,
-        vs: &Arc<ShaderModule>,
-        fs: &Arc<ShaderModule>,
-        viewport: Viewport,
-        render_pass: Arc<RenderPass>,
-    ) -> Arc<GraphicsPipeline> {
-        GraphicsPipeline::start()
-            .vertex_input_state(BuffersDefinition::new().vertex::<Vertex>())
-            .input_assembly_state(InputAssemblyState::new())
-            .vertex_shader(vs.entry_point("main").unwrap(), ())
-            .fragment_shader(fs.entry_point("main").unwrap(), ())
-            .viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
-            .depth_stencil_state(DepthStencilState::simple_depth_test())
-            .render_pass(Subpass::from(render_pass, 0).unwrap())
-            .build(gfx_queue.device().clone())
-            .unwrap()
     }
 
     fn create_framebuffers(
@@ -204,14 +203,10 @@ impl Layer for SceneLayer {
                 &self.render_pass,
                 swapchain_images,
             );
-            self.pipeline = Self::create_pipeline(
-                &self.gfx_queue,
-                &self.vs,
-                &self.fs,
-                viewport.clone(),
-                self.render_pass.clone(),
-            );
             self.dimensions = dimensions.clone().into();
+
+            self.material_registry
+                .recreate_pipelines(&self.gfx_queue, &self.render_pass, viewport);
         }
 
         // TODO a way to send/receive events from other layers
@@ -228,6 +223,7 @@ impl Layer for SceneLayer {
     }
 
     fn on_draw(&mut self, in_future: Box<dyn GpuFuture>, frame: &Frame) -> Box<dyn GpuFuture> {
+        let t0 = Instant::now();
         let scene_subbuffer = {
             let now = Instant::now();
             let t = (now - self.start_time).as_secs_f64();
@@ -241,22 +237,14 @@ impl Layer for SceneLayer {
             let projection =
                 Matrix4::new_perspective(self.dimensions.0 / self.dimensions.1, 45.0, 0.01, 100.0);
 
-            let data = shader::scene_vs::ty::Scene_Data {
+            // TODO use some common data type for this
+            let data = shader::simple_vs::ty::Scene_Data {
                 projection: projection.into(),
                 view: view.into(),
             };
 
             self.scene_pool.next(data).unwrap()
         };
-
-        let scene_layout = self.pipeline.layout().set_layouts().get(0).unwrap();
-        let model_layout = self.pipeline.layout().set_layouts().get(1).unwrap();
-
-        let scene_set = PersistentDescriptorSet::new(
-            scene_layout.clone(),
-            vec![WriteDescriptorSet::buffer(0, scene_subbuffer)],
-        )
-        .unwrap();
 
         let mut builder = AutoCommandBufferBuilder::primary(
             self.gfx_queue.device().clone(),
@@ -278,42 +266,64 @@ impl Layer for SceneLayer {
 
         builder
             .begin_render_pass(render_pass_begin_info, SubpassContents::Inline)
-            .unwrap()
-            .bind_pipeline_graphics(self.pipeline.clone())
-            .bind_descriptor_sets(
-                PipelineBindPoint::Graphics,
-                self.pipeline.layout().clone(),
-                0,
-                scene_set,
-            );
+            .unwrap();
 
-        for object in self.scene.iter() {
-            if let Some(mesh) = object.mesh() {
-                let model_set = PersistentDescriptorSet::new(
-                    model_layout.clone(),
-                    vec![WriteDescriptorSet::buffer(0, mesh.model_buffer().clone())],
-                )
-                .unwrap();
+        for group in self.scene.iter() {
+            let material_template = self.material_registry.get(group.material_template_id());
+            let pipeline = material_template.pipeline();
 
-                let model = mesh.model();
-                let model_data = model.data().unwrap();
+            let scene_layout = pipeline.layout().set_layouts().get(0).unwrap();
+            let model_layout = pipeline.layout().set_layouts().get(2).unwrap();
 
-                builder
-                    .bind_vertex_buffers(0, model_data.clone())
-                    .bind_descriptor_sets(
-                        PipelineBindPoint::Graphics,
-                        self.pipeline.layout().clone(),
-                        1,
-                        model_set,
+            let scene_set = PersistentDescriptorSet::new(
+                scene_layout.clone(),
+                vec![WriteDescriptorSet::buffer(0, scene_subbuffer.clone())],
+            )
+            .unwrap();
+
+            // Bind template
+            builder
+                .bind_pipeline_graphics(pipeline.clone())
+                .bind_descriptor_sets(
+                    PipelineBindPoint::Graphics,
+                    pipeline.layout().clone(),
+                    0,
+                    scene_set,
+                );
+
+            for object in group.iter() {
+                if let Some(mesh) = object.mesh() {
+                    let model_set = PersistentDescriptorSet::new(
+                        model_layout.clone(),
+                        vec![WriteDescriptorSet::buffer(0, mesh.model_buffer().clone())],
                     )
-                    .draw(model_data.len().try_into().unwrap(), 1, 0, 0)
                     .unwrap();
+
+                    let model = mesh.model();
+                    let model_data = model.data().unwrap();
+
+                    mesh.material_instance().bind_data(&mut builder, pipeline);
+
+                    builder
+                        .bind_vertex_buffers(0, model_data.clone())
+                        .bind_descriptor_sets(
+                            PipelineBindPoint::Graphics,
+                            pipeline.layout().clone(),
+                            2,
+                            model_set,
+                        )
+                        .draw(model_data.len().try_into().unwrap(), 1, 0, 0)
+                        .unwrap();
+                }
             }
         }
 
         builder.end_render_pass().unwrap();
 
         let cb = builder.build().unwrap();
+
+        let t1 = Instant::now();
+        log::debug!("Command buffer build: {:?}", t1 - t0);
 
         in_future
             .then_execute(self.gfx_queue.clone(), cb)

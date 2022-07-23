@@ -9,6 +9,8 @@ use vulkano::{
 
 use crate::render::Vertex;
 
+use super::material::MaterialTemplateId;
+
 pub enum Storage {
     Host(String),
     Device(Arc<ImmutableBuffer<[Vertex]>>),
@@ -18,10 +20,15 @@ pub struct Model {
     #[allow(dead_code)]
     gfx_queue: Arc<Queue>,
     data: Storage,
+    material_template_id: MaterialTemplateId,
 }
 
 impl Model {
-    pub fn new<I>(gfx_queue: Arc<Queue>, vertices: I) -> Self
+    pub fn new<I>(
+        gfx_queue: Arc<Queue>,
+        vertices: I,
+        material_template_id: MaterialTemplateId,
+    ) -> Self
     where
         I: IntoIterator<Item = Vertex>,
         I::IntoIter: ExactSizeIterator,
@@ -38,13 +45,19 @@ impl Model {
         Self {
             data: Storage::Device(buffer),
             gfx_queue,
+            material_template_id,
         }
     }
 
-    pub fn host(gfx_queue: Arc<Queue>, path: &str) -> Self {
+    pub fn host(
+        gfx_queue: Arc<Queue>,
+        path: &str,
+        material_template_id: MaterialTemplateId,
+    ) -> Self {
         Self {
             data: Storage::Host(path.to_owned()),
             gfx_queue,
+            material_template_id,
         }
     }
 
@@ -60,6 +73,10 @@ impl Model {
         }
     }
 
+    pub const fn material_template_id(&self) -> MaterialTemplateId {
+        self.material_template_id
+    }
+
     pub fn load(&mut self) {
         if let Storage::Host(_path) = &self.data {
             todo!()
@@ -67,7 +84,7 @@ impl Model {
     }
 
     // Helper constructors for debugging
-    pub fn triangle(gfx_queue: Arc<Queue>) -> Self {
+    pub fn triangle(gfx_queue: Arc<Queue>, material_template_id: MaterialTemplateId) -> Self {
         let vertices = vec![
             Vertex {
                 v_position: Point3::new(-0.5, -0.5, 0.0),
@@ -80,10 +97,10 @@ impl Model {
             },
         ];
 
-        Self::new(gfx_queue, vertices)
+        Self::new(gfx_queue, vertices, material_template_id)
     }
 
-    pub fn cube(gfx_queue: Arc<Queue>) -> Self {
+    pub fn cube(gfx_queue: Arc<Queue>, material_template_id: MaterialTemplateId) -> Self {
         let vertices = vec![
             // Front
             Vertex {
@@ -123,8 +140,46 @@ impl Model {
             Vertex {
                 v_position: Point3::new(0.5, -0.5, -0.5),
             },
+            // Back
+            Vertex {
+                v_position: Point3::new(-0.5, -0.5, 0.5),
+            },
+            Vertex {
+                v_position: Point3::new(0.5, -0.5, 0.5),
+            },
+            Vertex {
+                v_position: Point3::new(0.5, 0.5, 0.5),
+            },
+            Vertex {
+                v_position: Point3::new(0.5, 0.5, 0.5),
+            },
+            Vertex {
+                v_position: Point3::new(-0.5, 0.5, 0.5),
+            },
+            Vertex {
+                v_position: Point3::new(-0.5, -0.5, 0.5),
+            },
+            // Left
+            Vertex {
+                v_position: Point3::new(-0.5, -0.5, -0.5),
+            },
+            Vertex {
+                v_position: Point3::new(-0.5, -0.5, 0.5),
+            },
+            Vertex {
+                v_position: Point3::new(-0.5, 0.5, 0.5),
+            },
+            Vertex {
+                v_position: Point3::new(-0.5, 0.5, 0.5),
+            },
+            Vertex {
+                v_position: Point3::new(-0.5, 0.5, -0.5),
+            },
+            Vertex {
+                v_position: Point3::new(-0.5, -0.5, -0.5),
+            },
         ];
 
-        Self::new(gfx_queue, vertices)
+        Self::new(gfx_queue, vertices, material_template_id)
     }
 }
