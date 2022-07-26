@@ -6,6 +6,7 @@ pub mod frame;
 pub mod gui;
 pub mod scene;
 pub mod shader;
+pub mod system;
 
 #[repr(C)]
 #[derive(Default, Clone, Copy, Zeroable, Pod)]
