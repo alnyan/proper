@@ -98,7 +98,6 @@ impl ForwardSystem {
     ) -> Result<PrimaryAutoCommandBuffer, Error> {
         let t0 = Instant::now();
         let scene_layout = self.common_pipeline_layout.set_layouts().get(0).unwrap();
-        let model_layout = self.common_pipeline_layout.set_layouts().get(2).unwrap();
 
         let scene_set = PersistentDescriptorSet::new(
             scene_layout.clone(),
@@ -141,11 +140,6 @@ impl ForwardSystem {
 
             for object in group.iter() {
                 if let Some(mesh) = object.mesh() {
-                    let model_set = PersistentDescriptorSet::new(
-                        model_layout.clone(),
-                        vec![WriteDescriptorSet::buffer(0, mesh.model_buffer().clone())],
-                    )?;
-
                     let model = mesh.model();
                     let model_data = model.data().unwrap();
 
@@ -157,7 +151,7 @@ impl ForwardSystem {
                             PipelineBindPoint::Graphics,
                             pipeline.layout().clone(),
                             2,
-                            model_set,
+                            mesh.model_set().clone()
                         )
                         .draw(model_data.len().try_into().unwrap(), 1, 0, 0)?;
                 }

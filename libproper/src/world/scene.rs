@@ -5,7 +5,7 @@ use nalgebra::Matrix4;
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
     device::Queue,
-    sync::GpuFuture,
+    sync::GpuFuture, descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet}, pipeline::Pipeline,
 };
 
 use crate::{
@@ -35,6 +35,7 @@ pub struct MaterialEntityGroup {
 pub struct MeshObject {
     model: Arc<Model>,
     model_buffer: Arc<CpuAccessibleBuffer<shader::simple_vs::ty::Model_Data>>,
+    model_set: Arc<PersistentDescriptorSet>,
     material_instance: MaterialInstance,
 }
 
@@ -93,14 +94,21 @@ impl MeshObject {
         )?;
 
         let material_template = material_registry.get(model.material_template_id());
+        let model_layout = material_template.pipeline().layout().set_layouts().get(2).unwrap();
         let (material_instance, init) =
             material_template.create_instance(gfx_queue, material_instance_create_info)?;
 
         init.then_signal_fence_and_flush()?.wait(None).unwrap();
 
+        let model_set = PersistentDescriptorSet::new(
+            model_layout.clone(),
+            vec![WriteDescriptorSet::buffer(0, model_buffer.clone())],
+        )?;
+
         Ok(Self {
             model,
             model_buffer,
+            model_set,
             material_instance,
         })
     }
@@ -115,6 +123,11 @@ impl MeshObject {
         &self,
     ) -> &Arc<CpuAccessibleBuffer<shader::simple_vs::ty::Model_Data>> {
         &self.model_buffer
+    }
+
+    #[inline]
+    pub const fn model_set(&self) -> &Arc<PersistentDescriptorSet> {
+        &self.model_set
     }
 
     #[inline]

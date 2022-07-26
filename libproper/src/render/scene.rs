@@ -103,7 +103,7 @@ impl SceneLayer {
         let triangle_model = Arc::new(Model::triangle(gfx_queue.clone(), mat_simple_id)?);
         let cube_model = Arc::new(Model::cube(gfx_queue.clone(), mat_simple_id)?);
 
-        const SIZE: i32 = 4;
+        const SIZE: i32 = 35;
         let mut lock = forward_system.material_registry().lock().unwrap();
         for x in -SIZE..=SIZE {
             for y in -SIZE..=SIZE {
