@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{ops::DerefMut, sync::Arc};
 
 use bytemuck::Zeroable;
 use nalgebra::Matrix4;
@@ -79,10 +79,10 @@ impl MaterialEntityGroup {
 }
 
 impl MeshObject {
-    pub fn new(
+    pub fn new<I: DerefMut<Target = MaterialRegistry>>(
         gfx_queue: Arc<Queue>,
         model: Arc<Model>,
-        material_registry: &MaterialRegistry,
+        material_registry: &mut I,
         material_instance_create_info: MaterialInstanceCreateInfo,
     ) -> Result<Self, Error> {
         let model_buffer = CpuAccessibleBuffer::from_data(

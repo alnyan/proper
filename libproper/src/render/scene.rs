@@ -1,10 +1,14 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use nalgebra::{Matrix4, Point3, Vector3};
 use vulkano::{
-    buffer::{BufferUsage, CpuBufferPool, TypedBufferAccess},
+    buffer::{BufferAccess, BufferUsage, CpuBufferPool, TypedBufferAccess},
     command_buffer::{
-        AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
+        AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
+        RenderPassBeginInfo, SubpassContents,
     },
     descriptor_set::{
         layout::{DescriptorSetLayout, DescriptorSetLayoutCreateInfo},
@@ -47,26 +51,31 @@ type FramebufferCreateOutput = (Vec<Arc<Framebuffer>>, Arc<ImageView<AttachmentI
 
 pub struct SceneLayer {
     gfx_queue: Arc<Queue>,
+    scene_pool: CpuBufferPool<shader::simple_vs::ty::Scene_Data>,
+    scene: Scene,
+
+    forward_system: ForwardSystem,
+
+    start_time: Instant,
+    dimensions: (f32, f32),
+}
+
+pub struct ForwardSystem {
+    gfx_queue: Arc<Queue>,
+    common_pipeline_layout: Arc<PipelineLayout>,
     framebuffers: Vec<Arc<Framebuffer>>,
     depth_view: Arc<ImageView<AttachmentImage>>,
     render_pass: Arc<RenderPass>,
-    scene_pool: CpuBufferPool<shader::simple_vs::ty::Scene_Data>,
-    start_time: Instant,
-    dimensions: (f32, f32),
-
-    // Dummy stuff
-    common_pipeline_layout: Arc<PipelineLayout>,
-    scene: Scene,
-    material_registry: MaterialRegistry,
+    material_registry: Arc<Mutex<MaterialRegistry>>,
 }
 
-impl SceneLayer {
+impl ForwardSystem {
     pub fn new(
         gfx_queue: Arc<Queue>,
         output_format: Format,
         swapchain_images: &Vec<Arc<ImageView<SwapchainImage<Window>>>>,
         viewport: Viewport,
-        dimensions: PhysicalSize<u32>,
+        common_pipeline_layout: Arc<PipelineLayout>,
     ) -> Result<Self, Error> {
         let render_pass = vulkano::single_pass_renderpass!(
             gfx_queue.device().clone(),
@@ -90,63 +99,166 @@ impl SceneLayer {
             }
         )?;
 
-        let (framebuffers, depth_view) =
-            Self::create_framebuffers(gfx_queue.device().clone(), &render_pass, swapchain_images)?;
+        let material_registry = Arc::new(Mutex::new(MaterialRegistry::default()));
 
-        let mut material_registry = MaterialRegistry::default();
-
-        let mat_simple_id = material_registry.add(
+        material_registry.lock().unwrap().add(
             "simple",
             Box::new(SimpleMaterial::new(&gfx_queue, &render_pass, &viewport)?),
         );
 
-        let mut scene = Scene::default();
+        let (framebuffers, depth_view) =
+            Self::create_framebuffers(gfx_queue.device().clone(), &render_pass, swapchain_images)?;
 
-        let triangle_model = Arc::new(Model::triangle(gfx_queue.clone(), mat_simple_id)?);
-        let cube_model = Arc::new(Model::cube(gfx_queue.clone(), mat_simple_id)?);
+        Ok(Self {
+            gfx_queue,
+            common_pipeline_layout,
+            depth_view,
+            framebuffers,
+            material_registry,
+            render_pass,
+        })
+    }
 
-        const SIZE: i32 = 4;
-        for x in -SIZE..=SIZE {
-            for y in -SIZE..=SIZE {
-                let create_info = MaterialInstanceCreateInfo::default().with_color(
-                    "diffuse_color",
-                    [
-                        (x + SIZE) as f32 / (SIZE * 2 + 1) as f32,
-                        0.0,
-                        (y + SIZE) as f32 / (SIZE * 2 + 1) as f32,
-                        1.0,
-                    ],
-                );
+    fn create_framebuffers(
+        device: Arc<Device>,
+        render_pass: &Arc<RenderPass>,
+        swapchain_images: &Vec<Arc<ImageView<SwapchainImage<Window>>>>,
+    ) -> Result<FramebufferCreateOutput, Error> {
+        let depth_view = ImageView::new_default(AttachmentImage::transient(
+            device,
+            swapchain_images[0].dimensions().width_height(),
+            Format::D16_UNORM,
+        )?)?;
 
-                let mesh = if (x + y) % 2 == 0 {
-                    MeshObject::new(
-                        gfx_queue.clone(),
-                        triangle_model.clone(),
-                        &material_registry,
-                        create_info.clone(),
-                    )?
-                } else {
-                    MeshObject::new(
-                        gfx_queue.clone(),
-                        cube_model.clone(),
-                        &material_registry,
-                        create_info.clone(),
-                    )?
-                };
+        Ok((
+            swapchain_images
+                .into_iter()
+                .map(|image| {
+                    Framebuffer::new(
+                        render_pass.clone(),
+                        FramebufferCreateInfo {
+                            attachments: vec![image.clone(), depth_view.clone()],
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect::<Result<_, _>>()
+                .map_err(Error::from)?,
+            depth_view,
+        ))
+    }
 
-                let entity = Entity::new(Point3::new(x as f32, 0.0, y as f32), Some(mesh))?;
+    pub fn do_frame(
+        &mut self,
+        scene_buffer: Arc<dyn BufferAccess>,
+        frame: &Frame,
+        scene: &Scene,
+    ) -> Result<PrimaryAutoCommandBuffer, Error> {
+        let t0 = Instant::now();
+        let scene_layout = self.common_pipeline_layout.set_layouts().get(0).unwrap();
+        let model_layout = self.common_pipeline_layout.set_layouts().get(2).unwrap();
 
-                scene.add(entity);
+        let scene_set = PersistentDescriptorSet::new(
+            scene_layout.clone(),
+            vec![WriteDescriptorSet::buffer(0, scene_buffer)],
+        )?;
+
+        let mut builder = AutoCommandBufferBuilder::primary(
+            self.gfx_queue.device().clone(),
+            self.gfx_queue.family(),
+            CommandBufferUsage::OneTimeSubmit,
+        )?;
+
+        let framebuffer = self.framebuffers[frame.image_index].clone();
+
+        let mut render_pass_begin_info = RenderPassBeginInfo::framebuffer(framebuffer);
+
+        render_pass_begin_info
+            .clear_values
+            .push(Some(ClearValue::Float([0.0, 0.0, 0.0, 1.0])));
+        render_pass_begin_info
+            .clear_values
+            .push(Some(ClearValue::Depth(1.0)));
+
+        builder
+            .begin_render_pass(render_pass_begin_info, SubpassContents::Inline)?
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                self.common_pipeline_layout.clone(),
+                0,
+                scene_set,
+            );
+
+        let materials = self.material_registry.lock().unwrap();
+        for group in scene.iter() {
+            let material_template = materials.get(group.material_template_id());
+            let pipeline = material_template.pipeline();
+
+            // Bind template
+            builder.bind_pipeline_graphics(pipeline.clone());
+
+            for object in group.iter() {
+                if let Some(mesh) = object.mesh() {
+                    let model_set = PersistentDescriptorSet::new(
+                        model_layout.clone(),
+                        vec![WriteDescriptorSet::buffer(0, mesh.model_buffer().clone())],
+                    )?;
+
+                    let model = mesh.model();
+                    let model_data = model.data().unwrap();
+
+                    mesh.material_instance().bind_data(&mut builder, pipeline);
+
+                    builder
+                        .bind_vertex_buffers(0, model_data.clone())
+                        .bind_descriptor_sets(
+                            PipelineBindPoint::Graphics,
+                            pipeline.layout().clone(),
+                            2,
+                            model_set,
+                        )
+                        .draw(model_data.len().try_into().unwrap(), 1, 0, 0)?;
+                }
             }
         }
 
-        let scene_pool =
-            CpuBufferPool::new(gfx_queue.device().clone(), BufferUsage::uniform_buffer());
+        builder.end_render_pass()?;
 
-        let start_time = Instant::now();
+        let t1 = Instant::now();
+        log::debug!("Command buffer build: {:?}", t1 - t0);
 
-        let dimensions = dimensions.into();
+        builder.build().map_err(Error::from)
+    }
 
+    pub fn swapchain_invalidated(
+        &mut self,
+        viewport: &Viewport,
+        swapchain_images: &Vec<Arc<ImageView<SwapchainImage<Window>>>>,
+    ) -> Result<(), Error> {
+        (self.framebuffers, self.depth_view) = Self::create_framebuffers(
+            self.gfx_queue.device().clone(),
+            &self.render_pass,
+            swapchain_images,
+        )?;
+
+        self.material_registry.lock().unwrap().recreate_pipelines(
+            &self.gfx_queue,
+            &self.render_pass,
+            viewport,
+        )?;
+
+        Ok(())
+    }
+}
+
+impl SceneLayer {
+    pub fn new(
+        gfx_queue: Arc<Queue>,
+        output_format: Format,
+        swapchain_images: &Vec<Arc<ImageView<SwapchainImage<Window>>>>,
+        viewport: Viewport,
+        dimensions: PhysicalSize<u32>,
+    ) -> Result<Self, Error> {
         // Have to load these in order to access DescriptorRequirements
         let dummy_vs = shader::simple_vs::load(gfx_queue.device().clone())?;
         let dummy_vs_entry = dummy_vs
@@ -182,48 +294,77 @@ impl SceneLayer {
             },
         )?;
 
+        let forward_system = ForwardSystem::new(
+            gfx_queue.clone(),
+            output_format,
+            swapchain_images,
+            viewport,
+            common_pipeline_layout.clone(),
+        )?;
+
+        let mut scene = Scene::default();
+
+        let mat_simple_id = forward_system
+            .material_registry
+            .lock()
+            .unwrap()
+            .get_id("simple")
+            .unwrap();
+        let triangle_model = Arc::new(Model::triangle(gfx_queue.clone(), mat_simple_id)?);
+        let cube_model = Arc::new(Model::cube(gfx_queue.clone(), mat_simple_id)?);
+
+        const SIZE: i32 = 4;
+        let mut lock = forward_system.material_registry.lock().unwrap();
+        for x in -SIZE..=SIZE {
+            for y in -SIZE..=SIZE {
+                let create_info = MaterialInstanceCreateInfo::default().with_color(
+                    "diffuse_color",
+                    [
+                        (x + SIZE) as f32 / (SIZE * 2 + 1) as f32,
+                        0.0,
+                        (y + SIZE) as f32 / (SIZE * 2 + 1) as f32,
+                        1.0,
+                    ],
+                );
+
+                let mesh = if (x + y) % 2 == 0 {
+                    MeshObject::new(
+                        gfx_queue.clone(),
+                        triangle_model.clone(),
+                        &mut lock,
+                        create_info.clone(),
+                    )?
+                } else {
+                    MeshObject::new(
+                        gfx_queue.clone(),
+                        cube_model.clone(),
+                        &mut lock,
+                        create_info.clone(),
+                    )?
+                };
+
+                let entity = Entity::new(Point3::new(x as f32, 0.0, y as f32), Some(mesh))?;
+
+                scene.add(entity);
+            }
+        }
+        drop(lock);
+
+        let scene_pool =
+            CpuBufferPool::new(gfx_queue.device().clone(), BufferUsage::uniform_buffer());
+
+        let start_time = Instant::now();
+
+        let dimensions = dimensions.into();
+
         Ok(Self {
             gfx_queue,
-            render_pass,
-            framebuffers,
-            depth_view,
-            scene_pool,
-            start_time,
             dimensions,
-
-            material_registry,
+            scene_pool,
+            forward_system,
             scene,
-            common_pipeline_layout,
+            start_time,
         })
-    }
-
-    fn create_framebuffers(
-        device: Arc<Device>,
-        render_pass: &Arc<RenderPass>,
-        swapchain_images: &Vec<Arc<ImageView<SwapchainImage<Window>>>>,
-    ) -> Result<FramebufferCreateOutput, Error> {
-        let depth_view = ImageView::new_default(AttachmentImage::transient(
-            device,
-            swapchain_images[0].dimensions().width_height(),
-            Format::D16_UNORM,
-        )?)?;
-
-        Ok((
-            swapchain_images
-                .into_iter()
-                .map(|image| {
-                    Framebuffer::new(
-                        render_pass.clone(),
-                        FramebufferCreateInfo {
-                            attachments: vec![image.clone(), depth_view.clone()],
-                            ..Default::default()
-                        },
-                    )
-                })
-                .collect::<Result<_, _>>()
-                .map_err(Error::from)?,
-            depth_view,
-        ))
     }
 }
 
@@ -239,18 +380,10 @@ impl Layer for SceneLayer {
             dimensions,
         } = event
         {
-            (self.framebuffers, self.depth_view) = Self::create_framebuffers(
-                self.gfx_queue.device().clone(),
-                &self.render_pass,
-                swapchain_images,
-            )?;
             self.dimensions = (*dimensions).into();
-
-            self.material_registry.recreate_pipelines(
-                &self.gfx_queue,
-                &self.render_pass,
-                viewport,
-            )?;
+            self.forward_system
+                .swapchain_invalidated(viewport, swapchain_images)?;
+            return Ok(false);
         }
 
         // TODO a way to send/receive events from other layers
@@ -271,7 +404,6 @@ impl Layer for SceneLayer {
         in_future: Box<dyn GpuFuture>,
         frame: &Frame,
     ) -> Result<Box<dyn GpuFuture>, Error> {
-        let t0 = Instant::now();
         let scene_subbuffer = {
             let now = Instant::now();
             let t = (now - self.start_time).as_secs_f64();
@@ -294,79 +426,12 @@ impl Layer for SceneLayer {
             self.scene_pool.next(data)?
         };
 
-        let scene_layout = self.common_pipeline_layout.set_layouts().get(0).unwrap();
-        let model_layout = self.common_pipeline_layout.set_layouts().get(2).unwrap();
+        let forward_cb = self
+            .forward_system
+            .do_frame(scene_subbuffer, frame, &self.scene)?;
 
-        let scene_set = PersistentDescriptorSet::new(
-            scene_layout.clone(),
-            vec![WriteDescriptorSet::buffer(0, scene_subbuffer)],
-        )?;
-
-        let mut builder = AutoCommandBufferBuilder::primary(
-            self.gfx_queue.device().clone(),
-            self.gfx_queue.family(),
-            CommandBufferUsage::OneTimeSubmit,
-        )?;
-
-        let framebuffer = self.framebuffers[frame.image_index].clone();
-
-        let mut render_pass_begin_info = RenderPassBeginInfo::framebuffer(framebuffer);
-
-        render_pass_begin_info
-            .clear_values
-            .push(Some(ClearValue::Float([0.0, 0.0, 0.0, 1.0])));
-        render_pass_begin_info
-            .clear_values
-            .push(Some(ClearValue::Depth(1.0)));
-
-        builder
-            .begin_render_pass(render_pass_begin_info, SubpassContents::Inline)?
-            .bind_descriptor_sets(
-                PipelineBindPoint::Graphics,
-                self.common_pipeline_layout.clone(),
-                0,
-                scene_set,
-            );
-
-        for group in self.scene.iter() {
-            let material_template = self.material_registry.get(group.material_template_id());
-            let pipeline = material_template.pipeline();
-
-            // Bind template
-            builder.bind_pipeline_graphics(pipeline.clone());
-
-            for object in group.iter() {
-                if let Some(mesh) = object.mesh() {
-                    let model_set = PersistentDescriptorSet::new(
-                        model_layout.clone(),
-                        vec![WriteDescriptorSet::buffer(0, mesh.model_buffer().clone())],
-                    )?;
-
-                    let model = mesh.model();
-                    let model_data = model.data().unwrap();
-
-                    mesh.material_instance().bind_data(&mut builder, pipeline);
-
-                    builder
-                        .bind_vertex_buffers(0, model_data.clone())
-                        .bind_descriptor_sets(
-                            PipelineBindPoint::Graphics,
-                            pipeline.layout().clone(),
-                            2,
-                            model_set,
-                        )
-                        .draw(model_data.len().try_into().unwrap(), 1, 0, 0)?;
-                }
-            }
-        }
-
-        builder.end_render_pass()?;
-
-        let cb = builder.build()?;
-
-        let t1 = Instant::now();
-        log::debug!("Command buffer build: {:?}", t1 - t0);
-
-        Ok(in_future.then_execute(self.gfx_queue.clone(), cb)?.boxed())
+        Ok(in_future
+            .then_execute(self.gfx_queue.clone(), forward_cb)?
+            .boxed())
     }
 }

@@ -12,3 +12,6 @@ libproper = { path = "libproper" }
 
 [workspace]
 members = ["libproper"]
+
+[profile.dev]
+opt-level = 2
