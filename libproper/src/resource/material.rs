@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use vulkano::{
     buffer::{BufferUsage, ImmutableBuffer},
-    command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer},
+    command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer},
     descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
     device::Queue,
     pipeline::{
@@ -24,7 +24,7 @@ use crate::{
     render::{shader, Vertex},
 };
 
-pub trait MaterialTemplate {
+pub trait MaterialTemplate: Send + Sync {
     fn recreate_pipeline(
         &mut self,
         gfx_queue: &Arc<Queue>,
@@ -67,6 +67,9 @@ pub struct MaterialRegistry {
     names: BTreeMap<String, MaterialTemplateId>,
 }
 
+unsafe impl Send for MaterialRegistry {}
+//unsafe impl<T: MaterialTemplate> Send for T {}
+
 impl MaterialRegistry {
     pub fn recreate_pipelines(
         &mut self,
@@ -99,7 +102,7 @@ impl MaterialRegistry {
 impl MaterialInstance {
     pub fn bind_data(
         &self,
-        builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+        builder: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
         pipeline: &Arc<GraphicsPipeline>,
     ) {
         builder.bind_descriptor_sets(

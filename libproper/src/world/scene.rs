@@ -24,12 +24,12 @@ use super::entity::Entity;
 #[derive(Default)]
 pub struct Scene {
     // Renderable entities, sorted by material template
-    data: Vec<MaterialEntityGroup>,
+    pub data: Vec<MaterialEntityGroup>,
 }
 
 pub struct MaterialEntityGroup {
     material_template_id: MaterialTemplateId,
-    entities: Vec<Entity>,
+    pub entities: Vec<Entity>,
 }
 
 pub struct MeshObject {

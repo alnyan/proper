@@ -9,6 +9,7 @@ edition = "2021"
 log = "0.4.17"
 simplelog = "0.12.0"
 libproper = { path = "libproper" }
+rayon = "1.5.3"
 
 [workspace]
 members = ["libproper"]

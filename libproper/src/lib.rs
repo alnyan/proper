@@ -30,6 +30,8 @@ pub struct Application {
 
 impl Application {
     pub fn new() -> Result<Self, Error> {
+        rayon::ThreadPoolBuilder::new().num_threads(24).build_global().unwrap();
+
         let event_loop = EventLoop::new();
         let layers = Arc::new(Mutex::new(vec![]));
         let render_context = VulkanContext::new_windowed(

@@ -776,6 +776,7 @@ dependencies = [
  "egui_winit_vulkano",
  "log",
  "nalgebra",
+ "rayon",
  "thiserror",
  "vulkano",
  "vulkano-shaders",
@@ -1312,6 +1313,7 @@ version = "0.1.0"
 dependencies = [
  "libproper",
  "log",
+ "rayon",
  "simplelog",
 ]
 

@@ -8,7 +8,7 @@ use vulkano::{
     format::Format,
     image::{view::ImageView, SwapchainImage},
     pipeline::{graphics::viewport::Viewport, layout::PipelineLayoutCreateInfo, PipelineLayout},
-    sync::GpuFuture,
+    sync::GpuFuture, instance::InstanceCreationError,
 };
 use winit::{
     dpi::PhysicalSize,
@@ -103,7 +103,7 @@ impl SceneLayer {
         let triangle_model = Arc::new(Model::triangle(gfx_queue.clone(), mat_simple_id)?);
         let cube_model = Arc::new(Model::cube(gfx_queue.clone(), mat_simple_id)?);
 
-        const SIZE: i32 = 35;
+        const SIZE: i32 = 24;
         let mut lock = forward_system.material_registry().lock().unwrap();
         for x in -SIZE..=SIZE {
             for y in -SIZE..=SIZE {
