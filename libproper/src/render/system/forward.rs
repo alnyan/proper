@@ -185,6 +185,7 @@ impl ForwardSystem {
             vec![WriteDescriptorSet::buffer(0, scene_buffer)],
         )?;
 
+        let t0 = Instant::now();
         let cbs = self.record_secondary_buffers(&scene_set, scene);
 
         let mut builder = AutoCommandBufferBuilder::primary(
@@ -212,7 +213,12 @@ impl ForwardSystem {
             .unwrap()
             .end_render_pass()?;
 
-        builder.build().map_err(Error::from)
+        let res = builder.build().map_err(Error::from);
+
+        let t1 = Instant::now();
+        dbg!(t1 - t0);
+
+        res
     }
 
     pub fn swapchain_invalidated(

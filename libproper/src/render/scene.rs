@@ -7,8 +7,9 @@ use vulkano::{
     device::Queue,
     format::Format,
     image::{view::ImageView, SwapchainImage},
+    instance::InstanceCreationError,
     pipeline::{graphics::viewport::Viewport, layout::PipelineLayoutCreateInfo, PipelineLayout},
-    sync::GpuFuture, instance::InstanceCreationError,
+    sync::GpuFuture,
 };
 use winit::{
     dpi::PhysicalSize,
@@ -100,18 +101,33 @@ impl SceneLayer {
             .unwrap()
             .get_id("simple")
             .unwrap();
-        let triangle_model = Arc::new(Model::triangle(gfx_queue.clone(), mat_simple_id)?);
-        let cube_model = Arc::new(Model::cube(gfx_queue.clone(), mat_simple_id)?);
+        let model0 = Arc::new(Model::load_to_device(
+            gfx_queue.clone(),
+            "res/models/monkey.obj",
+            mat_simple_id
+        )?);
+        let model1 = Arc::new(Model::load_to_device(
+            gfx_queue.clone(),
+            "res/models/torus.obj",
+            mat_simple_id,
+        )?);
+        // let cube_model = Arc::new(Model::cube(gfx_queue.clone(), mat_simple_id)?);
 
         const SIZE: i32 = 24;
         let mut lock = forward_system.material_registry().lock().unwrap();
         for x in -SIZE..=SIZE {
             for y in -SIZE..=SIZE {
+                let v = if (x + y) % 2 == 0 {
+                    1.0
+                } else {
+                    0.0
+                };
+
                 let create_info = MaterialInstanceCreateInfo::default().with_color(
                     "diffuse_color",
                     [
                         (x + SIZE) as f32 / (SIZE * 2 + 1) as f32,
-                        0.0,
+                        v,
                         (y + SIZE) as f32 / (SIZE * 2 + 1) as f32,
                         1.0,
                     ],
@@ -120,20 +136,20 @@ impl SceneLayer {
                 let mesh = if (x + y) % 2 == 0 {
                     MeshObject::new(
                         gfx_queue.clone(),
-                        triangle_model.clone(),
+                        model0.clone(),
                         &mut lock,
                         create_info.clone(),
                     )?
                 } else {
                     MeshObject::new(
                         gfx_queue.clone(),
-                        cube_model.clone(),
+                        model1.clone(),
                         &mut lock,
                         create_info.clone(),
                     )?
                 };
 
-                let entity = Entity::new(Point3::new(x as f32, 0.0, y as f32), Some(mesh))?;
+                let entity = Entity::new(Point3::new(x as f32, v, y as f32), Some(mesh))?;
 
                 scene.add(entity);
             }

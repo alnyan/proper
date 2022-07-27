@@ -776,6 +776,7 @@ dependencies = [
  "egui_winit_vulkano",
  "log",
  "nalgebra",
+ "obj-rs",
  "rayon",
  "thiserror",
  "vulkano",
@@ -1148,6 +1149,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2819ce041d2ee131036f4fc9d6ae7ae125a3a40e97ba64d04fe799ad9dabbb44"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "obj-rs"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c90a2f645433dba5c609451d3fa847282b0f23ee8d8fa75491a946af53cb1db4"
+dependencies = [
+ "num-traits",
+ "serde",
 ]
 
 [[package]]

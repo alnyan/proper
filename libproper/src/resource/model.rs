@@ -1,10 +1,11 @@
-use std::sync::Arc;
+use std::{sync::Arc, io::BufReader, fs::File, path::Path};
 
 use nalgebra::Point3;
+use obj::Obj;
 use vulkano::{
     buffer::{BufferUsage, ImmutableBuffer},
     device::Queue,
-    sync::GpuFuture,
+    sync::GpuFuture
 };
 
 use crate::{error::Error, render::Vertex};
@@ -57,6 +58,15 @@ impl Model {
         }
     }
 
+    pub fn load_to_device(gfx_queue: Arc<Queue>, path: &str, material_template_id: MaterialTemplateId) -> Result<Self, Error> {
+        let data = Self::load_obj(gfx_queue.clone(), path)?;
+        Ok(Self {
+            data,
+            gfx_queue,
+            material_template_id
+        })
+    }
+
     #[inline]
     pub const fn is_loaded(&self) -> bool {
         matches!(self.data, Storage::Device(_))
@@ -76,115 +86,137 @@ impl Model {
         self.material_template_id
     }
 
-    pub fn load(&mut self) {
-        if let Storage::Host(_path) = &self.data {
-            todo!()
+    pub fn load(&mut self) -> Result<(), Error> {
+        if let Storage::Host(path) = &self.data {
+            self.data = Self::load_obj(self.gfx_queue.clone(), path)?;
+            Ok(())
+        } else {
+            Err(Error::AlreadyLoaded)
         }
     }
 
-    // Helper constructors for debugging
-    pub fn triangle(
-        gfx_queue: Arc<Queue>,
-        material_template_id: MaterialTemplateId,
-    ) -> Result<Self, Error> {
-        let vertices = vec![
-            Vertex {
-                v_position: Point3::new(-0.5, -0.5, 0.0),
-            },
-            Vertex {
-                v_position: Point3::new(0.0, 0.5, 0.0),
-            },
-            Vertex {
-                v_position: Point3::new(0.5, -0.5, 0.0),
-            },
-        ];
+    fn load_obj<P: AsRef<Path>>(gfx_queue: Arc<Queue>, path: P) -> Result<Storage, Error> {
+        let input = BufReader::new(File::open(path).unwrap());
+        let obj: Obj = obj::load_obj(input).unwrap();
 
-        Self::new(gfx_queue, vertices, material_template_id)
+        let vertices = obj.indices.iter().map(|&i| {
+            Vertex {
+                v_position: obj.vertices[i as usize].position.into(),
+                v_normal: obj.vertices[i as usize].normal.into()
+            }
+        });
+
+        let (buffer, init) =
+            ImmutableBuffer::from_iter(vertices, BufferUsage::vertex_buffer(), gfx_queue)?;
+
+        init.then_signal_fence_and_flush()?.wait(None).unwrap();
+
+        Ok(Storage::Device(buffer))
     }
 
-    pub fn cube(
-        gfx_queue: Arc<Queue>,
-        material_template_id: MaterialTemplateId,
-    ) -> Result<Self, Error> {
-        let vertices = vec![
-            // Front
-            Vertex {
-                v_position: Point3::new(-0.5, -0.5, -0.5),
-            },
-            Vertex {
-                v_position: Point3::new(0.5, -0.5, -0.5),
-            },
-            Vertex {
-                v_position: Point3::new(0.5, 0.5, -0.5),
-            },
-            Vertex {
-                v_position: Point3::new(0.5, 0.5, -0.5),
-            },
-            Vertex {
-                v_position: Point3::new(-0.5, 0.5, -0.5),
-            },
-            Vertex {
-                v_position: Point3::new(-0.5, -0.5, -0.5),
-            },
-            // Right
-            Vertex {
-                v_position: Point3::new(0.5, -0.5, -0.5),
-            },
-            Vertex {
-                v_position: Point3::new(0.5, -0.5, 0.5),
-            },
-            Vertex {
-                v_position: Point3::new(0.5, 0.5, 0.5),
-            },
-            Vertex {
-                v_position: Point3::new(0.5, 0.5, 0.5),
-            },
-            Vertex {
-                v_position: Point3::new(0.5, 0.5, -0.5),
-            },
-            Vertex {
-                v_position: Point3::new(0.5, -0.5, -0.5),
-            },
-            // Back
-            Vertex {
-                v_position: Point3::new(-0.5, -0.5, 0.5),
-            },
-            Vertex {
-                v_position: Point3::new(0.5, -0.5, 0.5),
-            },
-            Vertex {
-                v_position: Point3::new(0.5, 0.5, 0.5),
-            },
-            Vertex {
-                v_position: Point3::new(0.5, 0.5, 0.5),
-            },
-            Vertex {
-                v_position: Point3::new(-0.5, 0.5, 0.5),
-            },
-            Vertex {
-                v_position: Point3::new(-0.5, -0.5, 0.5),
-            },
-            // Left
-            Vertex {
-                v_position: Point3::new(-0.5, -0.5, -0.5),
-            },
-            Vertex {
-                v_position: Point3::new(-0.5, -0.5, 0.5),
-            },
-            Vertex {
-                v_position: Point3::new(-0.5, 0.5, 0.5),
-            },
-            Vertex {
-                v_position: Point3::new(-0.5, 0.5, 0.5),
-            },
-            Vertex {
-                v_position: Point3::new(-0.5, 0.5, -0.5),
-            },
-            Vertex {
-                v_position: Point3::new(-0.5, -0.5, -0.5),
-            },
-        ];
+    // // Helper constructors for debugging
+    // pub fn triangle(
+    //     gfx_queue: Arc<Queue>,
+    //     material_template_id: MaterialTemplateId,
+    // ) -> Result<Self, Error> {
+    //     let vertices = vec![
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, -0.5, 0.0),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.0, 0.5, 0.0),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.5, -0.5, 0.0),
+    //         },
+    //     ];
 
-        Self::new(gfx_queue, vertices, material_template_id)
-    }
+    //     Self::new(gfx_queue, vertices, material_template_id)
+    // }
+
+    // pub fn cube(
+    //     gfx_queue: Arc<Queue>,
+    //     material_template_id: MaterialTemplateId,
+    // ) -> Result<Self, Error> {
+    //     let vertices = vec![
+    //         // Front
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, -0.5, -0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.5, -0.5, -0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.5, 0.5, -0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.5, 0.5, -0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, 0.5, -0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, -0.5, -0.5),
+    //         },
+    //         // Right
+    //         Vertex {
+    //             v_position: Point3::new(0.5, -0.5, -0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.5, -0.5, 0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.5, 0.5, 0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.5, 0.5, 0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.5, 0.5, -0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.5, -0.5, -0.5),
+    //         },
+    //         // Back
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, -0.5, 0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.5, -0.5, 0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.5, 0.5, 0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(0.5, 0.5, 0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, 0.5, 0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, -0.5, 0.5),
+    //         },
+    //         // Left
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, -0.5, -0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, -0.5, 0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, 0.5, 0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, 0.5, 0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, 0.5, -0.5),
+    //         },
+    //         Vertex {
+    //             v_position: Point3::new(-0.5, -0.5, -0.5),
+    //         },
+    //     ];
+
+    //     Self::new(gfx_queue, vertices, material_template_id)
+    // }
 }

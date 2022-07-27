@@ -77,4 +77,7 @@ pub enum Error {
 
     #[error("Failed to acquire buffer write lock")]
     BufferWriteLock(#[from] WriteLockError),
+
+    #[error("Resource is already loaded")]
+    AlreadyLoaded
 }
