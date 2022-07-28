@@ -232,7 +232,11 @@ impl VulkanContext {
             SwapchainCreateInfo {
                 min_image_count: caps.min_image_count,
                 image_extent: surface.window().inner_size().into(),
-                image_usage: ImageUsage::color_attachment(),
+                image_usage: ImageUsage {
+                    color_attachment: true,
+                    transfer_dst: true,
+                    ..ImageUsage::none()
+                },
                 composite_alpha: caps.supported_composite_alpha.iter().next().unwrap(),
                 image_format,
                 ..Default::default()

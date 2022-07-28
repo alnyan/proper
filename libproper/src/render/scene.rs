@@ -4,11 +4,12 @@ use nalgebra::{Matrix4, Point3, Vector3};
 use vulkano::{
     buffer::{BufferUsage, CpuBufferPool},
     descriptor_set::layout::{DescriptorSetLayout, DescriptorSetLayoutCreateInfo},
-    device::Queue,
+    device::{Device, Queue},
     format::Format,
-    image::{view::ImageView, SwapchainImage},
+    image::{view::ImageView, AttachmentImage, ImageViewAbstract, SampleCount, SwapchainImage},
     instance::InstanceCreationError,
     pipeline::{graphics::viewport::Viewport, layout::PipelineLayoutCreateInfo, PipelineLayout},
+    render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass},
     sync::GpuFuture,
 };
 use winit::{
@@ -31,10 +32,22 @@ use crate::{
 
 use super::{frame::Frame, shader, system::forward::ForwardSystem};
 
+type FramebufferCreateOutput = (
+    Vec<Arc<Framebuffer>>,
+    Arc<ImageView<AttachmentImage>>,
+    Arc<ImageView<AttachmentImage>>,
+);
+
 pub struct SceneLayer {
     gfx_queue: Arc<Queue>,
     scene_pool: CpuBufferPool<shader::simple_vs::ty::Scene_Data>,
     scene: Scene,
+
+    render_pass: Arc<RenderPass>,
+
+    framebuffers: Vec<Arc<Framebuffer>>,
+    color_view: Arc<ImageView<AttachmentImage>>,
+    depth_view: Arc<ImageView<AttachmentImage>>,
 
     forward_system: ForwardSystem,
 
@@ -85,11 +98,46 @@ impl SceneLayer {
             },
         )?;
 
+        let render_pass = vulkano::ordered_passes_renderpass!(
+            gfx_queue.device().clone(),
+            attachments: {
+                ms_color: {
+                    load: Clear,
+                    store: DontCare,
+                    format: output_format,
+                    samples: 4,
+                },
+                depth: {
+                    load: Clear,
+                    store: DontCare,
+                    format: Format::D16_UNORM,
+                    samples: 4,
+                },
+                final_color: {
+                    load: Clear,
+                    store: Store,
+                    format: output_format,
+                    samples: 1,
+                }
+            },
+            passes: [
+                {
+                    color: [ms_color],
+                    depth_stencil: {depth},
+                    input: []
+                },
+                {
+                    color: [final_color],
+                    depth_stencil: {},
+                    input: [ms_color]
+                }
+            ]
+        )?;
+
         let forward_system = ForwardSystem::new(
             gfx_queue.clone(),
-            output_format,
-            swapchain_images,
             viewport,
+            render_pass.clone(),
             common_pipeline_layout.clone(),
         )?;
 
@@ -104,7 +152,7 @@ impl SceneLayer {
         let model0 = Arc::new(Model::load_to_device(
             gfx_queue.clone(),
             "res/models/monkey.obj",
-            mat_simple_id
+            mat_simple_id,
         )?);
         let model1 = Arc::new(Model::load_to_device(
             gfx_queue.clone(),
@@ -117,11 +165,7 @@ impl SceneLayer {
         let mut lock = forward_system.material_registry().lock().unwrap();
         for x in -SIZE..=SIZE {
             for y in -SIZE..=SIZE {
-                let v = if (x + y) % 2 == 0 {
-                    1.0
-                } else {
-                    0.0
-                };
+                let v = if (x + y) % 2 == 0 { 1.0 } else { 0.0 };
 
                 let create_info = MaterialInstanceCreateInfo::default().with_color(
                     "diffuse_color",
@@ -163,14 +207,70 @@ impl SceneLayer {
 
         let dimensions = dimensions.into();
 
+        let (framebuffers, color_view, depth_view) =
+            Self::create_framebuffers(gfx_queue.device().clone(), &render_pass, swapchain_images)?;
+
         Ok(Self {
             gfx_queue,
             dimensions,
             scene_pool,
+
+            framebuffers,
+            color_view,
+            depth_view,
+
+            render_pass,
+
             forward_system,
+
             scene,
             start_time,
         })
+    }
+
+    fn create_framebuffers(
+        device: Arc<Device>,
+        render_pass: &Arc<RenderPass>,
+        swapchain_images: &Vec<Arc<ImageView<SwapchainImage<Window>>>>,
+    ) -> Result<FramebufferCreateOutput, Error> {
+        let color_view = ImageView::new_default(
+            AttachmentImage::transient_multisampled_input_attachment(
+                device.clone(),
+                swapchain_images[0].dimensions().width_height(),
+                SampleCount::Sample4,
+                swapchain_images[0].format().unwrap(),
+            )
+            .unwrap(),
+        )?;
+        let depth_view = ImageView::new_default(AttachmentImage::transient_multisampled(
+            device,
+            swapchain_images[0].dimensions().width_height(),
+            SampleCount::Sample4,
+            Format::D16_UNORM,
+        )?)?;
+
+        Ok((
+            swapchain_images
+                .into_iter()
+                .enumerate()
+                .map(|(i, image)| {
+                    Framebuffer::new(
+                        render_pass.clone(),
+                        FramebufferCreateInfo {
+                            attachments: vec![
+                                color_view.clone(),
+                                depth_view.clone(),
+                                image.clone(),
+                            ],
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect::<Result<_, _>>()
+                .map_err(Error::from)?,
+            color_view,
+            depth_view,
+        ))
     }
 }
 
@@ -187,6 +287,12 @@ impl Layer for SceneLayer {
         } = event
         {
             self.dimensions = (*dimensions).into();
+            (self.framebuffers, self.color_view, self.depth_view) = Self::create_framebuffers(
+                self.gfx_queue.device().clone(),
+                &self.render_pass,
+                swapchain_images,
+            )?;
+
             self.forward_system
                 .swapchain_invalidated(viewport, swapchain_images)?;
             return Ok(false);
@@ -232,9 +338,13 @@ impl Layer for SceneLayer {
             self.scene_pool.next(data)?
         };
 
-        let forward_cb = self
-            .forward_system
-            .do_frame(scene_subbuffer, frame, &self.scene)?;
+        let forward_cb = self.forward_system.do_frame(
+            scene_subbuffer,
+            self.color_view.clone(),
+            self.framebuffers[frame.image_index].clone(),
+            frame,
+            &self.scene,
+        )?;
 
         Ok(in_future
             .then_execute(self.gfx_queue.clone(), forward_cb)?

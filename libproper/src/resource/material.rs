@@ -10,7 +10,7 @@ use vulkano::{
             depth_stencil::DepthStencilState,
             input_assembly::InputAssemblyState,
             vertex_input::BuffersDefinition,
-            viewport::{Viewport, ViewportState},
+            viewport::{Viewport, ViewportState}, multisample::MultisampleState,
         },
         GraphicsPipeline, Pipeline, PipelineBindPoint,
     },
@@ -149,6 +149,8 @@ impl SimpleMaterial {
         vs: &Arc<ShaderModule>,
         fs: &Arc<ShaderModule>,
     ) -> Result<Arc<GraphicsPipeline>, Error> {
+        let subpass = Subpass::from(render_pass.clone(), 0).ok_or(Error::MissingSubpass)?;
+
         GraphicsPipeline::start()
             .input_assembly_state(InputAssemblyState::new())
             .vertex_input_state(BuffersDefinition::new().vertex::<Vertex>())
@@ -163,8 +165,12 @@ impl SimpleMaterial {
                 (),
             )
             .depth_stencil_state(DepthStencilState::simple_depth_test())
+            .multisample_state(MultisampleState {
+                rasterization_samples: subpass.num_samples().unwrap(),
+                ..Default::default()
+            })
             .viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
-            .render_pass(Subpass::from(render_pass.clone(), 0).ok_or(Error::MissingSubpass)?)
+            .render_pass(subpass)
             .build(gfx_queue.device().clone())
             .map_err(Error::from)
     }
