@@ -1,6 +1,5 @@
 use std::{sync::Arc, io::BufReader, fs::File, path::Path};
 
-use nalgebra::Point3;
 use obj::Obj;
 use vulkano::{
     buffer::{BufferUsage, ImmutableBuffer},

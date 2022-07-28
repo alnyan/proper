@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use vulkano::{
     buffer::{BufferUsage, ImmutableBuffer},
-    command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer},
+    command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer},
     descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
     device::Queue,
     pipeline::{

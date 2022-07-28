@@ -2,12 +2,17 @@ use std::{sync::Arc, time::Instant};
 
 use nalgebra::{Matrix4, Point3, Vector3};
 use vulkano::{
-    buffer::{BufferUsage, CpuBufferPool},
-    descriptor_set::layout::{DescriptorSetLayout, DescriptorSetLayoutCreateInfo},
+    buffer::{BufferUsage, CpuAccessibleBuffer},
+    command_buffer::{
+        AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
+    },
+    descriptor_set::{
+        layout::{DescriptorSetLayout, DescriptorSetLayoutCreateInfo},
+        PersistentDescriptorSet, WriteDescriptorSet,
+    },
     device::{Device, Queue},
-    format::Format,
+    format::{ClearValue, Format},
     image::{view::ImageView, AttachmentImage, ImageViewAbstract, SampleCount, SwapchainImage},
-    instance::InstanceCreationError,
     pipeline::{graphics::viewport::Viewport, layout::PipelineLayoutCreateInfo, PipelineLayout},
     render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass},
     sync::GpuFuture,
@@ -30,7 +35,11 @@ use crate::{
     },
 };
 
-use super::{frame::Frame, shader, system::forward::ForwardSystem};
+use super::{
+    frame::Frame,
+    shader,
+    system::{forward::ForwardSystem, screen::ScreenSystem},
+};
 
 type FramebufferCreateOutput = (
     Vec<Arc<Framebuffer>>,
@@ -40,8 +49,9 @@ type FramebufferCreateOutput = (
 
 pub struct SceneLayer {
     gfx_queue: Arc<Queue>,
-    scene_pool: CpuBufferPool<shader::simple_vs::ty::Scene_Data>,
     scene: Scene,
+    scene_buffer: Arc<CpuAccessibleBuffer<shader::simple_vs::ty::Scene_Data>>,
+    scene_set: Arc<PersistentDescriptorSet>,
 
     render_pass: Arc<RenderPass>,
 
@@ -50,6 +60,7 @@ pub struct SceneLayer {
     depth_view: Arc<ImageView<AttachmentImage>>,
 
     forward_system: ForwardSystem,
+    screen_system: ScreenSystem,
 
     start_time: Instant,
     dimensions: (f32, f32),
@@ -134,11 +145,21 @@ impl SceneLayer {
             ]
         )?;
 
+        let (framebuffers, color_view, depth_view) =
+            Self::create_framebuffers(gfx_queue.device().clone(), &render_pass, swapchain_images)?;
+
         let forward_system = ForwardSystem::new(
             gfx_queue.clone(),
-            viewport,
+            &viewport,
             render_pass.clone(),
             common_pipeline_layout.clone(),
+        )?;
+
+        let screen_system = ScreenSystem::new(
+            gfx_queue.clone(),
+            render_pass.clone(),
+            color_view.clone(),
+            &viewport,
         )?;
 
         let mut scene = Scene::default();
@@ -200,20 +221,29 @@ impl SceneLayer {
         }
         drop(lock);
 
-        let scene_pool =
-            CpuBufferPool::new(gfx_queue.device().clone(), BufferUsage::uniform_buffer());
-
         let start_time = Instant::now();
 
-        let dimensions = dimensions.into();
+        let scene_buffer = unsafe {
+            CpuAccessibleBuffer::uninitialized(
+                gfx_queue.device().clone(),
+                BufferUsage::uniform_buffer(),
+                false,
+            )?
+        };
 
-        let (framebuffers, color_view, depth_view) =
-            Self::create_framebuffers(gfx_queue.device().clone(), &render_pass, swapchain_images)?;
+        let scene_layout = common_pipeline_layout.set_layouts().get(0).unwrap();
+        let scene_set = PersistentDescriptorSet::new(
+            scene_layout.clone(),
+            vec![WriteDescriptorSet::buffer(0, scene_buffer.clone())],
+        )?;
+
+        let dimensions = dimensions.into();
 
         Ok(Self {
             gfx_queue,
             dimensions,
-            scene_pool,
+            scene_buffer,
+            scene_set,
 
             framebuffers,
             color_view,
@@ -222,6 +252,7 @@ impl SceneLayer {
             render_pass,
 
             forward_system,
+            screen_system,
 
             scene,
             start_time,
@@ -252,8 +283,7 @@ impl SceneLayer {
         Ok((
             swapchain_images
                 .into_iter()
-                .enumerate()
-                .map(|(i, image)| {
+                .map(|image| {
                     Framebuffer::new(
                         render_pass.clone(),
                         FramebufferCreateInfo {
@@ -293,8 +323,9 @@ impl Layer for SceneLayer {
                 swapchain_images,
             )?;
 
-            self.forward_system
-                .swapchain_invalidated(viewport, swapchain_images)?;
+            self.forward_system.swapchain_invalidated(viewport)?;
+            self.screen_system
+                .swapchain_invalidated(viewport, self.color_view.clone())?;
             return Ok(false);
         }
 
@@ -316,7 +347,9 @@ impl Layer for SceneLayer {
         in_future: Box<dyn GpuFuture>,
         frame: &Frame,
     ) -> Result<Box<dyn GpuFuture>, Error> {
-        let scene_subbuffer = {
+        {
+            let mut data = self.scene_buffer.write()?;
+
             let now = Instant::now();
             let t = (now - self.start_time).as_secs_f64();
 
@@ -330,24 +363,48 @@ impl Layer for SceneLayer {
                 Matrix4::new_perspective(self.dimensions.0 / self.dimensions.1, 45.0, 0.01, 100.0);
 
             // TODO use some common data type for this
-            let data = shader::simple_vs::ty::Scene_Data {
+            *data = shader::simple_vs::ty::Scene_Data {
                 projection: projection.into(),
                 view: view.into(),
             };
-
-            self.scene_pool.next(data)?
         };
 
-        let forward_cb = self.forward_system.do_frame(
-            scene_subbuffer,
-            self.color_view.clone(),
-            self.framebuffers[frame.image_index].clone(),
-            frame,
-            &self.scene,
+        let framebuffer = &self.framebuffers[frame.image_index];
+
+        let mut builder = AutoCommandBufferBuilder::primary(
+            self.gfx_queue.device().clone(),
+            self.gfx_queue.family(),
+            CommandBufferUsage::OneTimeSubmit,
         )?;
 
-        Ok(in_future
-            .then_execute(self.gfx_queue.clone(), forward_cb)?
-            .boxed())
+        let mut render_pass_begin_info = RenderPassBeginInfo::framebuffer(framebuffer.clone());
+
+        render_pass_begin_info
+            .clear_values
+            .push(Some(ClearValue::Float([0.0, 0.0, 0.0, 1.0])));
+        render_pass_begin_info
+            .clear_values
+            .push(Some(ClearValue::Depth(1.0)));
+        render_pass_begin_info
+            .clear_values
+            .push(Some(ClearValue::Float([0.0, 0.0, 0.0, 1.0])));
+
+        builder.begin_render_pass(
+            render_pass_begin_info,
+            SubpassContents::SecondaryCommandBuffers,
+        )?;
+
+        self.forward_system
+            .do_frame(&mut builder, &self.scene_set, &self.scene)?;
+
+        builder.next_subpass(SubpassContents::Inline)?;
+
+        self.screen_system.do_frame(&mut builder)?;
+
+        builder.end_render_pass()?;
+
+        let cb = builder.build()?;
+
+        Ok(in_future.then_execute(self.gfx_queue.clone(), cb)?.boxed())
     }
 }
