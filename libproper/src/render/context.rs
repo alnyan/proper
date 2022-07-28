@@ -46,8 +46,8 @@ pub struct VulkanContext {
 }
 
 impl VulkanContext {
-    pub fn new_windowed(
-        event_loop: &EventLoop<()>,
+    pub fn new_windowed<T>(
+        event_loop: &EventLoop<T>,
         window_builder: WindowBuilder,
         layers: LayerVec,
     ) -> Result<Self, Error> {

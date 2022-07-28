@@ -122,14 +122,18 @@ impl ForwardSystem {
         for group in scene.data.iter() {
             let num_objects = group.entities.len();
             let material_template = materials.get(group.material_template_id());
-            let chunks = group.entities.chunks(num_objects / 12);
+            if num_objects > 12 {
+                let chunks = group.entities.chunks(num_objects / 12);
 
-            let data: Vec<SecondaryAutoCommandBuffer> = chunks
-                .par_bridge()
-                .map(|chunk| self.record_command_buffer_part(material_template, scene_set, chunk))
-                .collect();
+                let data: Vec<SecondaryAutoCommandBuffer> = chunks
+                    .par_bridge()
+                    .map(|chunk| self.record_command_buffer_part(material_template, scene_set, chunk))
+                    .collect();
 
-            cbs.extend(data);
+                cbs.extend(data);
+            } else {
+                cbs.push(self.record_command_buffer_part(material_template, scene_set, &group.entities));
+            }
         }
 
         cbs

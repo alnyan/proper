@@ -16,6 +16,11 @@ pub enum Event<'a> {
     WindowCloseRequested,
     // Required for egui-winit compat
     WindowEventWrapped(&'a WindowEvent<'a>),
+    GameEvent(GameEvent),
+}
+
+pub enum GameEvent {
+    TestEvent
 }
 
 impl<'a> TryFrom<&'a WindowEvent<'a>> for Event<'a> {

@@ -2,20 +2,21 @@ use std::sync::Arc;
 
 use egui_winit_vulkano::{egui, Gui};
 use vulkano::{device::Queue, swapchain::Surface, sync::GpuFuture};
-use winit::{event_loop::ControlFlow, window::Window};
+use winit::{event_loop::{ControlFlow, EventLoopProxy}, window::Window};
 
-use crate::{error::Error, event::Event, layer::Layer};
+use crate::{error::Error, event::{Event, GameEvent}, layer::Layer};
 
 use super::frame::Frame;
 
 pub struct GuiLayer {
     inner: Gui,
+    event_proxy: EventLoopProxy<GameEvent>,
 }
 
 impl GuiLayer {
-    pub fn new(surface: Arc<Surface<Window>>, gfx_queue: Arc<Queue>) -> Self {
+    pub fn new(event_proxy: EventLoopProxy<GameEvent>, surface: Arc<Surface<Window>>, gfx_queue: Arc<Queue>) -> Self {
         let inner = Gui::new(surface, gfx_queue, true);
-        Self { inner }
+        Self { inner, event_proxy }
     }
 }
 
@@ -45,7 +46,7 @@ impl Layer for GuiLayer {
                 .resizable(true)
                 .show(&ctx, |ui| {
                     if ui.add(egui::Button::new("TEXT")).clicked() {
-                        println!("TEST");
+                        self.event_proxy.send_event(GameEvent::TestEvent).ok();
                     }
                 });
         });

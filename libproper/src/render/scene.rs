@@ -26,7 +26,7 @@ use winit::{
 
 use crate::{
     error::Error,
-    event::Event,
+    event::{Event, GameEvent},
     layer::Layer,
     resource::{material::MaterialInstanceCreateInfo, model::Model},
     world::{
@@ -54,6 +54,10 @@ pub struct SceneLayer {
     scene_set: Arc<PersistentDescriptorSet>,
 
     render_pass: Arc<RenderPass>,
+
+    // TODO move this to some ModelRegistry
+    model0: Arc<Model>,
+    model1: Arc<Model>,
 
     framebuffers: Vec<Arc<Framebuffer>>,
     color_view: Arc<ImageView<AttachmentImage>>,
@@ -162,7 +166,7 @@ impl SceneLayer {
             &viewport,
         )?;
 
-        let mut scene = Scene::default();
+        let scene = Scene::default();
 
         let mat_simple_id = forward_system
             .material_registry()
@@ -180,46 +184,6 @@ impl SceneLayer {
             "res/models/torus.obj",
             mat_simple_id,
         )?);
-        // let cube_model = Arc::new(Model::cube(gfx_queue.clone(), mat_simple_id)?);
-
-        const SIZE: i32 = 24;
-        let mut lock = forward_system.material_registry().lock().unwrap();
-        for x in -SIZE..=SIZE {
-            for y in -SIZE..=SIZE {
-                let v = if (x + y) % 2 == 0 { 1.0 } else { 0.0 };
-
-                let create_info = MaterialInstanceCreateInfo::default().with_color(
-                    "diffuse_color",
-                    [
-                        (x + SIZE) as f32 / (SIZE * 2 + 1) as f32,
-                        v,
-                        (y + SIZE) as f32 / (SIZE * 2 + 1) as f32,
-                        1.0,
-                    ],
-                );
-
-                let mesh = if (x + y) % 2 == 0 {
-                    MeshObject::new(
-                        gfx_queue.clone(),
-                        model0.clone(),
-                        &mut lock,
-                        create_info.clone(),
-                    )?
-                } else {
-                    MeshObject::new(
-                        gfx_queue.clone(),
-                        model1.clone(),
-                        &mut lock,
-                        create_info.clone(),
-                    )?
-                };
-
-                let entity = Entity::new(Point3::new(x as f32, v, y as f32), Some(mesh))?;
-
-                scene.add(entity);
-            }
-        }
-        drop(lock);
 
         let start_time = Instant::now();
 
@@ -244,6 +208,9 @@ impl SceneLayer {
             dimensions,
             scene_buffer,
             scene_set,
+
+            model0,
+            model1,
 
             framebuffers,
             color_view,
@@ -329,7 +296,7 @@ impl Layer for SceneLayer {
             return Ok(false);
         }
 
-        // TODO a way to send/receive events from other layers
+        // Click on the scene, TODO
         if let Event::WindowEventWrapped(WindowEvent::MouseInput {
             state: ElementState::Pressed,
             button: MouseButton::Left,
@@ -337,6 +304,38 @@ impl Layer for SceneLayer {
         }) = event
         {
             todo!()
+        }
+
+        // Events from other layers
+        if let Event::GameEvent(GameEvent::TestEvent) = event {
+            let mut lock = self.forward_system.material_registry().lock().unwrap();
+
+            let b = rand::random();
+
+            let x = rand::random();
+            let y = rand::random();
+            let z = rand::random();
+            let position = Point3::new((x - 0.5) * 5.0, y, (z - 0.5) * 5.0);
+
+            let model = if b {
+                self.model0.clone()
+            } else {
+                self.model1.clone()
+            };
+
+            let create_info =
+                MaterialInstanceCreateInfo::default().with_color("diffuse_color", [x, y, z, 1.0]);
+
+            let mesh = MeshObject::new(
+                self.gfx_queue.clone(),
+                model,
+                &mut lock,
+                create_info.clone(),
+            )?;
+
+            let entity = Entity::new(position, Some(mesh))?;
+
+            self.scene.add(entity);
         }
 
         Ok(false)
