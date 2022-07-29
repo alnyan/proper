@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{path::Path, sync::Arc, time::Instant};
 
 use nalgebra::{Matrix4, Point3, Vector3};
 use vulkano::{
@@ -12,9 +12,13 @@ use vulkano::{
     },
     device::{Device, Queue},
     format::{ClearValue, Format},
-    image::{view::ImageView, AttachmentImage, ImageViewAbstract, SampleCount, SwapchainImage},
+    image::{
+        view::ImageView, AttachmentImage, ImageDimensions, ImageViewAbstract, ImmutableImage,
+        MipmapsCount, SampleCount, SwapchainImage,
+    },
     pipeline::{graphics::viewport::Viewport, layout::PipelineLayoutCreateInfo, PipelineLayout},
     render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass},
+    sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo},
     sync::GpuFuture,
 };
 use winit::{
@@ -56,6 +60,9 @@ pub struct SceneLayer {
     render_pass: Arc<RenderPass>,
 
     // TODO move this to some ModelRegistry
+    sampler: Arc<Sampler>,
+    texture0: Arc<ImageView<ImmutableImage>>,
+    texture1: Arc<ImageView<ImmutableImage>>,
     model0: Arc<Model>,
     model1: Arc<Model>,
 
@@ -68,6 +75,33 @@ pub struct SceneLayer {
 
     start_time: Instant,
     dimensions: (f32, f32),
+}
+
+fn load_texture<P: AsRef<Path>>(gfx_queue: Arc<Queue>, path: P) -> Arc<ImageView<ImmutableImage>> {
+    let image = image::open(path).unwrap();
+    let width = image.width();
+    let height = image.height();
+    let data = image.into_rgba8();
+
+    let (texture, init) = ImmutableImage::from_iter(
+        data.into_raw(),
+        ImageDimensions::Dim2d {
+            width,
+            height,
+            array_layers: 1,
+        },
+        MipmapsCount::One,
+        Format::R8G8B8A8_UNORM,
+        gfx_queue,
+    )
+    .unwrap();
+
+    init.then_signal_fence_and_flush()
+        .unwrap()
+        .wait(None)
+        .unwrap();
+
+    ImageView::new_default(texture).unwrap()
 }
 
 impl SceneLayer {
@@ -184,6 +218,18 @@ impl SceneLayer {
             "res/models/torus.obj",
             mat_simple_id,
         )?);
+        let texture0 = load_texture(gfx_queue.clone(), "res/textures/texture0.png");
+        let texture1 = load_texture(gfx_queue.clone(), "res/textures/texture1.png");
+        let sampler = Sampler::new(
+            gfx_queue.device().clone(),
+            SamplerCreateInfo {
+                address_mode: [SamplerAddressMode::Repeat; 3],
+                min_filter: Filter::Nearest,
+                mag_filter: Filter::Nearest,
+                ..Default::default()
+            },
+        )
+        .unwrap();
 
         let start_time = Instant::now();
 
@@ -211,6 +257,9 @@ impl SceneLayer {
 
             model0,
             model1,
+            texture0,
+            texture1,
+            sampler,
 
             framebuffers,
             color_view,
@@ -311,6 +360,7 @@ impl Layer for SceneLayer {
             let mut lock = self.forward_system.material_registry().lock().unwrap();
 
             let b = rand::random();
+            let t = rand::random();
 
             let x = rand::random();
             let y = rand::random();
@@ -322,9 +372,15 @@ impl Layer for SceneLayer {
             } else {
                 self.model1.clone()
             };
+            let texture = if t {
+                self.texture0.clone()
+            } else {
+                self.texture1.clone()
+            };
 
-            let create_info =
-                MaterialInstanceCreateInfo::default().with_color("diffuse_color", [x, y, z, 1.0]);
+            let create_info = MaterialInstanceCreateInfo::default()
+                .with_color("diffuse_color", [x, y, z, 1.0])
+                .with_texture("diffuse_map", self.sampler.clone(), texture);
 
             let mesh = MeshObject::new(
                 self.gfx_queue.clone(),

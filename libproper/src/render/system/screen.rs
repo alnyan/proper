@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nalgebra::{Point3, Vector3};
+use nalgebra::Point3;
 use vulkano::{
     buffer::{BufferUsage, ImmutableBuffer},
     command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer},
@@ -22,14 +22,14 @@ use vulkano::{
 
 use crate::{
     error::Error,
-    render::{shader, Vertex},
+    render::{shader, SimpleVertex},
 };
 
 pub struct ScreenSystem {
     gfx_queue: Arc<Queue>,
     render_pass: Arc<RenderPass>,
 
-    vertex_buffer: Arc<ImmutableBuffer<[Vertex]>>,
+    vertex_buffer: Arc<ImmutableBuffer<[SimpleVertex]>>,
     screen_set: Arc<PersistentDescriptorSet>,
     vs: Arc<ShaderModule>,
     fs: Arc<ShaderModule>,
@@ -45,29 +45,23 @@ impl ScreenSystem {
     ) -> Result<Self, Error> {
         let (vertex_buffer, init) = ImmutableBuffer::from_iter(
             vec![
-                Vertex {
+                SimpleVertex {
                     v_position: Point3::new(-1.0, -1.0, 0.0),
-                    v_normal: Vector3::new(0.0, 0.0, 0.0),
                 },
-                Vertex {
+                SimpleVertex {
                     v_position: Point3::new(1.0, -1.0, 0.0),
-                    v_normal: Vector3::new(0.0, 0.0, 0.0),
                 },
-                Vertex {
+                SimpleVertex {
                     v_position: Point3::new(1.0, 1.0, 0.0),
-                    v_normal: Vector3::new(0.0, 0.0, 0.0),
                 },
-                Vertex {
+                SimpleVertex {
                     v_position: Point3::new(1.0, 1.0, 0.0),
-                    v_normal: Vector3::new(0.0, 0.0, 0.0),
                 },
-                Vertex {
+                SimpleVertex {
                     v_position: Point3::new(-1.0, 1.0, 0.0),
-                    v_normal: Vector3::new(0.0, 0.0, 0.0),
                 },
-                Vertex {
+                SimpleVertex {
                     v_position: Point3::new(-1.0, -1.0, 0.0),
-                    v_normal: Vector3::new(0.0, 0.0, 0.0),
                 },
             ],
             BufferUsage::vertex_buffer(),
@@ -157,7 +151,7 @@ impl ScreenSystem {
         screen_fs: Arc<ShaderModule>,
     ) -> Arc<GraphicsPipeline> {
         GraphicsPipeline::start()
-            .vertex_input_state(BuffersDefinition::new().vertex::<Vertex>())
+            .vertex_input_state(BuffersDefinition::new().vertex::<SimpleVertex>())
             .input_assembly_state(InputAssemblyState::new())
             .render_pass(Subpass::from(render_pass, 1).unwrap())
             .vertex_shader(screen_vs.entry_point("main").unwrap(), ())

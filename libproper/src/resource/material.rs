@@ -5,16 +5,19 @@ use vulkano::{
     command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer},
     descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
     device::Queue,
+    image::{view::ImageView, ImmutableImage},
     pipeline::{
         graphics::{
             depth_stencil::DepthStencilState,
             input_assembly::InputAssemblyState,
+            multisample::MultisampleState,
             vertex_input::BuffersDefinition,
-            viewport::{Viewport, ViewportState}, multisample::MultisampleState,
+            viewport::{Viewport, ViewportState},
         },
         GraphicsPipeline, Pipeline, PipelineBindPoint,
     },
     render_pass::{RenderPass, Subpass},
+    sampler::Sampler,
     shader::ShaderModule,
     sync::GpuFuture,
 };
@@ -40,15 +43,15 @@ pub trait MaterialTemplate: Send + Sync {
     ) -> Result<(MaterialInstance, Box<dyn GpuFuture>), Error>;
 }
 
-// #[derive(Clone)]
-// pub struct SampledImage {
-//     image: Arc<ImageView<ImmutableImage>>,
-//     sampler: Arc<Sampler>,
-// }
+#[derive(Clone)]
+pub struct SampledImage {
+    image: Arc<ImageView<ImmutableImage>>,
+    sampler: Arc<Sampler>,
+}
 
 #[derive(Clone, Default)]
 pub struct MaterialInstanceCreateInfo {
-    // textures: BTreeMap<String, SampledImage>,
+    textures: BTreeMap<String, SampledImage>,
     colors: BTreeMap<String, [f32; 4]>,
 }
 
@@ -117,6 +120,17 @@ impl MaterialInstance {
 impl MaterialInstanceCreateInfo {
     pub fn with_color(mut self, name: &str, color: [f32; 4]) -> Self {
         self.colors.insert(name.to_owned(), color);
+        self
+    }
+
+    pub fn with_texture(
+        mut self,
+        name: &str,
+        sampler: Arc<Sampler>,
+        image: Arc<ImageView<ImmutableImage>>,
+    ) -> Self {
+        self.textures
+            .insert(name.to_owned(), SampledImage { image, sampler });
         self
     }
 }
@@ -195,16 +209,26 @@ impl MaterialTemplate for SimpleMaterial {
     ) -> Result<(MaterialInstance, Box<dyn GpuFuture>), Error> {
         let (buffer, init) = ImmutableBuffer::from_data(
             shader::simple_fs::ty::Material_Data {
-                diffuse_color: *create_info.colors.get("diffuse_color").unwrap(),
+                diffuse_color: *create_info.colors.get("diffuse_color").unwrap_or(&[1.0; 4]),
             },
             BufferUsage::uniform_buffer(),
             gfx_queue,
         )?;
 
+        let diffuse_map;
+        if let Some(map) = create_info.textures.get("diffuse_map") {
+            diffuse_map = WriteDescriptorSet::image_view_sampler(1, map.image.clone(), map.sampler.clone());
+        } else {
+            diffuse_map = WriteDescriptorSet::none(1);
+        }
+
         let layout = self.pipeline.layout().set_layouts().get(1).unwrap();
         let material_set = PersistentDescriptorSet::new(
             layout.clone(),
-            vec![WriteDescriptorSet::buffer(0, buffer)],
+            vec![
+                WriteDescriptorSet::buffer(0, buffer),
+                diffuse_map,
+            ]
         )?;
 
         Ok((

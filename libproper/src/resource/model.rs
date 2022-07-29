@@ -1,6 +1,7 @@
 use std::{sync::Arc, io::BufReader, fs::File, path::Path};
 
-use obj::Obj;
+use nalgebra::Point2;
+use obj::{Obj, TexturedVertex};
 use vulkano::{
     buffer::{BufferUsage, ImmutableBuffer},
     device::Queue,
@@ -96,12 +97,14 @@ impl Model {
 
     fn load_obj<P: AsRef<Path>>(gfx_queue: Arc<Queue>, path: P) -> Result<Storage, Error> {
         let input = BufReader::new(File::open(path).unwrap());
-        let obj: Obj = obj::load_obj(input).unwrap();
+        let obj: Obj<TexturedVertex> = obj::load_obj(input).unwrap();
 
         let vertices = obj.indices.iter().map(|&i| {
+            let v = obj.vertices[i as usize];
             Vertex {
-                v_position: obj.vertices[i as usize].position.into(),
-                v_normal: obj.vertices[i as usize].normal.into()
+                v_position: v.position.into(),
+                v_normal: v.normal.into(),
+                v_tex_coord: Point2::new(v.texture[0], v.texture[1]),
             }
         });
 
