@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use vulkano::{
     device::{
@@ -23,8 +23,6 @@ use crate::{error::Error, event::Event, layer::Layer};
 
 use super::frame::Frame;
 
-pub type LayerVec = Arc<Mutex<Vec<Box<dyn Layer>>>>;
-
 type SwapchainCreateOutput = (
     Arc<Swapchain<Window>>,
     Vec<Arc<ImageView<SwapchainImage<Window>>>>,
@@ -41,15 +39,12 @@ pub struct VulkanContext {
     swapchain_images: Vec<Arc<ImageView<SwapchainImage<Window>>>>,
     viewport: Viewport,
     need_swapchain_recreation: bool,
-
-    layers: LayerVec,
 }
 
 impl VulkanContext {
     pub fn new_windowed<T>(
         event_loop: &EventLoop<T>,
         window_builder: WindowBuilder,
-        layers: LayerVec,
     ) -> Result<Self, Error> {
         log::debug!("Creating new windowed vulkan context");
 
@@ -97,7 +92,6 @@ impl VulkanContext {
             swapchain,
             swapchain_images,
             viewport,
-            layers,
             format,
             need_swapchain_recreation: false,
         })
@@ -131,7 +125,11 @@ impl VulkanContext {
         self.need_swapchain_recreation = true;
     }
 
-    pub fn do_frame(&mut self, flow: &mut ControlFlow) -> Result<(), Error> {
+    pub fn do_frame(
+        &mut self,
+        flow: &mut ControlFlow,
+        layers: &mut Vec<Box<dyn Layer>>,
+    ) -> Result<(), Error> {
         if self.need_swapchain_recreation {
             let dimensions = self.recreate_swapchain()?;
 
@@ -141,7 +139,7 @@ impl VulkanContext {
                 viewport: self.viewport.clone(),
                 dimensions,
             };
-            for layer in self.layers.lock().unwrap().iter_mut() {
+            for layer in layers.iter_mut() {
                 // Ignore hierarchy, this event needs to be delivered to every layer
                 layer.on_event(&event, flow)?;
             }
@@ -161,7 +159,7 @@ impl VulkanContext {
             destination: self.swapchain_images[image_index].clone(),
             viewport: self.viewport.clone(),
         };
-        for layer in self.layers.lock().unwrap().iter_mut() {
+        for layer in layers.iter_mut() {
             in_future = layer.on_draw(in_future, &frame)?;
         }
 

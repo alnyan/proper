@@ -11,7 +11,6 @@ use vulkano::{
     command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer},
     descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
     device::Queue,
-    image::{view::ImageView, ImmutableImage},
     pipeline::{
         graphics::{
             depth_stencil::DepthStencilState,
@@ -23,7 +22,6 @@ use vulkano::{
         GraphicsPipeline, Pipeline, PipelineBindPoint,
     },
     render_pass::{RenderPass, Subpass},
-    sampler::Sampler,
     shader::ShaderModule,
     sync::GpuFuture,
 };
@@ -32,6 +30,8 @@ use crate::{
     error::Error,
     render::{shader, Vertex},
 };
+
+use super::texture::SampledTexture;
 
 pub trait MaterialTemplate: Send + Sync {
     fn recreate_pipeline(
@@ -51,16 +51,9 @@ pub trait MaterialTemplate: Send + Sync {
     fn id(&self) -> &AtomicU64;
 }
 
-#[allow(dead_code)]
-#[derive(Clone)]
-pub struct SampledImage {
-    image: Arc<ImageView<ImmutableImage>>,
-    sampler: Arc<Sampler>,
-}
-
 #[derive(Clone, Default)]
 pub struct MaterialInstanceCreateInfo {
-    textures: BTreeMap<String, SampledImage>,
+    textures: BTreeMap<String, Arc<SampledTexture>>,
     colors: BTreeMap<String, [f32; 4]>,
 }
 
@@ -148,14 +141,8 @@ impl MaterialInstanceCreateInfo {
         self
     }
 
-    pub fn with_texture(
-        mut self,
-        name: &str,
-        sampler: Arc<Sampler>,
-        image: Arc<ImageView<ImmutableImage>>,
-    ) -> Self {
-        self.textures
-            .insert(name.to_owned(), SampledImage { image, sampler });
+    pub fn with_texture(mut self, name: &str, texture: Arc<SampledTexture>) -> Self {
+        self.textures.insert(name.to_owned(), texture);
         self
     }
 }
@@ -257,21 +244,22 @@ impl MaterialTemplate for SimpleMaterial {
             gfx_queue,
         )?;
 
-        // let diffuse_map;
-        // if let Some(map) = create_info.textures.get("diffuse_map") {
-        //     diffuse_map =
-        //         WriteDescriptorSet::image_view_sampler(1, map.image.clone(), map.sampler.clone());
-        // } else {
-        //     diffuse_map = WriteDescriptorSet::none(1);
-        // }
+        let diffuse_map;
+        if let Some(map) = create_info.textures.get("diffuse_map") {
+            diffuse_map = WriteDescriptorSet::image_view_sampler(
+                1,
+                map.image().clone(),
+                map.sampler().clone(),
+            );
+        } else {
+            diffuse_map = WriteDescriptorSet::none(1);
+        }
 
         let pipeline_lock = self.pipeline.read().unwrap();
         let layout = pipeline_lock.layout().set_layouts().get(1).unwrap();
         let material_set = PersistentDescriptorSet::new(
             layout.clone(),
-            vec![
-                WriteDescriptorSet::buffer(0, buffer), /*, diffuse_map */
-            ],
+            vec![WriteDescriptorSet::buffer(0, buffer), diffuse_map],
         )?;
 
         Ok((

@@ -10,7 +10,7 @@ use crate::{
     render::frame::Frame,
     resource::{
         material::{MaterialInstanceCreateInfo, MaterialRegistry},
-        model::ModelRegistry,
+        model::ModelRegistry, texture::TextureRegistry,
     },
     world::{entity::Entity, scene::Scene},
 };
@@ -21,6 +21,7 @@ pub struct LogicLayer {
     scene: Arc<Mutex<Scene>>,
     material_registry: Arc<Mutex<MaterialRegistry>>,
     model_registry: Arc<Mutex<ModelRegistry>>,
+    texture_registry: Arc<Mutex<TextureRegistry>>
 }
 
 impl LogicLayer {
@@ -28,11 +29,13 @@ impl LogicLayer {
         scene: Arc<Mutex<Scene>>,
         material_registry: Arc<Mutex<MaterialRegistry>>,
         model_registry: Arc<Mutex<ModelRegistry>>,
+        texture_registry: Arc<Mutex<TextureRegistry>>
     ) -> Self {
         Self {
             scene,
             material_registry,
             model_registry,
+            texture_registry
         }
     }
 }
@@ -54,14 +57,22 @@ impl Layer for LogicLayer {
         if let Event::GameEvent(GameEvent::TestEvent) = event {
             let mut materials = self.material_registry.lock().unwrap();
             let mut models = self.model_registry.lock().unwrap();
+            let mut textures = self.texture_registry.lock().unwrap();
             let mut scene = self.scene.lock().unwrap();
 
             let position = random_point() * 4.0;
             let model_type = rand::random();
+            let texture_type = rand::random();
 
             let material = materials.get_or_load("simple").unwrap();
+            let texture = if texture_type {
+                textures.get_or_load("texture0")?
+            } else {
+                textures.get_or_load("texture1")?
+            };
             let material_create_info = MaterialInstanceCreateInfo::default()
-                .with_color("diffuse_color", [0.0, 1.0, 0.0, 1.0]);
+                .with_color("diffuse_color", [0.0, 1.0, 0.0, 1.0])
+                .with_texture("diffuse_map", texture);
             let mesh = if model_type {
                 models.create_mesh_object("torus", material, material_create_info)?
             } else {
