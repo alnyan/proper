@@ -4,9 +4,7 @@ use egui_winit_vulkano::{egui, Gui};
 use vulkano::{device::Queue, swapchain::Surface, sync::GpuFuture};
 use winit::{event_loop::{ControlFlow, EventLoopProxy}, window::Window};
 
-use crate::{error::Error, event::{Event, GameEvent}, layer::Layer};
-
-use super::frame::Frame;
+use crate::{error::Error, event::{Event, GameEvent}, layer::Layer, render::frame::Frame};
 
 pub struct GuiLayer {
     inner: Gui,

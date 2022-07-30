@@ -4,8 +4,10 @@ use bytemuck::Zeroable;
 use nalgebra::Matrix4;
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
+    descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
     device::Queue,
-    sync::GpuFuture, descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet}, pipeline::Pipeline,
+    pipeline::Pipeline,
+    sync::GpuFuture,
 };
 
 use crate::{
@@ -25,6 +27,7 @@ use super::entity::Entity;
 pub struct Scene {
     // Renderable entities, sorted by material template
     pub data: Vec<MaterialEntityGroup>,
+    pub loading_list: Vec<Entity>,
 }
 
 pub struct MaterialEntityGroup {
@@ -49,20 +52,37 @@ impl Scene {
         self.data.iter_mut()
     }
 
-    pub fn add(&mut self, entity: Entity) {
-        let material_template_id = entity.mesh().unwrap().model_material_template_id();
+    pub fn instantiate_models<I: DerefMut<Target = MaterialRegistry>>(
+        &mut self,
+        gfx_queue: &Arc<Queue>,
+        material_registry: &mut I,
+    ) -> Result<(), Error> {
+        while let Some(mut entity) = self.loading_list.pop() {
+            entity.instantiate(gfx_queue.clone(), material_registry)?;
 
-        if let Some(group) = self
-            .data
-            .iter_mut()
-            .find(|p| p.material_template_id == material_template_id)
-        {
-            group.entities.push(entity);
+            self.add(entity);
+        }
+        Ok(())
+    }
+
+    pub fn add(&mut self, entity: Entity) {
+        if let Some(mesh) = entity.mesh() {
+            let material_template_id = mesh.model_material_template_id();
+
+            if let Some(group) = self
+                .data
+                .iter_mut()
+                .find(|p| p.material_template_id == material_template_id)
+            {
+                group.entities.push(entity);
+            } else {
+                self.data.push(MaterialEntityGroup {
+                    material_template_id,
+                    entities: vec![entity],
+                });
+            }
         } else {
-            self.data.push(MaterialEntityGroup {
-                material_template_id,
-                entities: vec![entity],
-            });
+            self.loading_list.push(entity);
         }
     }
 }
@@ -94,7 +114,12 @@ impl MeshObject {
         )?;
 
         let material_template = material_registry.get(model.material_template_id());
-        let model_layout = material_template.pipeline().layout().set_layouts().get(2).unwrap();
+        let model_layout = material_template
+            .pipeline()
+            .layout()
+            .set_layouts()
+            .get(2)
+            .unwrap();
         let (material_instance, init) =
             material_template.create_instance(gfx_queue, material_instance_create_info)?;
 

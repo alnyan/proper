@@ -18,8 +18,6 @@ pub enum Storage {
 }
 
 pub struct Model {
-    #[allow(dead_code)]
-    gfx_queue: Arc<Queue>,
     data: Storage,
     material_template_id: MaterialTemplateId,
 }
@@ -41,19 +39,16 @@ impl Model {
 
         Ok(Self {
             data: Storage::Device(buffer),
-            gfx_queue,
             material_template_id,
         })
     }
 
     pub fn host(
-        gfx_queue: Arc<Queue>,
         path: &str,
         material_template_id: MaterialTemplateId,
     ) -> Self {
         Self {
             data: Storage::Host(path.to_owned()),
-            gfx_queue,
             material_template_id,
         }
     }
@@ -62,7 +57,6 @@ impl Model {
         let data = Self::load_obj(gfx_queue.clone(), path)?;
         Ok(Self {
             data,
-            gfx_queue,
             material_template_id
         })
     }
@@ -86,9 +80,9 @@ impl Model {
         self.material_template_id
     }
 
-    pub fn load(&mut self) -> Result<(), Error> {
+    pub fn load(&mut self, gfx_queue: Arc<Queue>) -> Result<(), Error> {
         if let Storage::Host(path) = &self.data {
-            self.data = Self::load_obj(self.gfx_queue.clone(), path)?;
+            self.data = Self::load_obj(gfx_queue, path)?;
             Ok(())
         } else {
             Err(Error::AlreadyLoaded)

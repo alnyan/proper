@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc, time::Instant};
+use std::{path::Path, sync::{Arc, Mutex}, time::Instant};
 
 use nalgebra::{Matrix4, Point3, Vector3};
 use vulkano::{
@@ -17,7 +17,7 @@ use vulkano::{
         MipmapsCount, SampleCount, SwapchainImage,
     },
     pipeline::{graphics::viewport::Viewport, layout::PipelineLayoutCreateInfo, PipelineLayout},
-    render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass},
+    render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass},
     sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo},
     sync::GpuFuture,
 };
@@ -32,17 +32,11 @@ use crate::{
     error::Error,
     event::{Event, GameEvent},
     layer::Layer,
-    resource::{material::MaterialInstanceCreateInfo, model::Model},
+    resource::{material::{MaterialInstanceCreateInfo, MaterialRegistry}, model::Model},
     world::{
         entity::Entity,
         scene::{MeshObject, Scene},
-    },
-};
-
-use super::{
-    frame::Frame,
-    shader,
-    system::{forward::ForwardSystem, screen::ScreenSystem},
+    }, render::{shader, system::{forward::ForwardSystem, screen::ScreenSystem}, frame::Frame},
 };
 
 type FramebufferCreateOutput = (
@@ -51,20 +45,14 @@ type FramebufferCreateOutput = (
     Arc<ImageView<AttachmentImage>>,
 );
 
-pub struct SceneLayer {
+pub struct WorldLayer {
     gfx_queue: Arc<Queue>,
-    scene: Scene,
+    scene: Arc<Mutex<Scene>>,
     scene_buffer: Arc<CpuAccessibleBuffer<shader::simple_vs::ty::Scene_Data>>,
     scene_set: Arc<PersistentDescriptorSet>,
 
+    material_registry: Arc<Mutex<MaterialRegistry>>,
     render_pass: Arc<RenderPass>,
-
-    // TODO move this to some ModelRegistry
-    sampler: Arc<Sampler>,
-    texture0: Arc<ImageView<ImmutableImage>>,
-    texture1: Arc<ImageView<ImmutableImage>>,
-    model0: Arc<Model>,
-    model1: Arc<Model>,
 
     framebuffers: Vec<Arc<Framebuffer>>,
     color_view: Arc<ImageView<AttachmentImage>>,
@@ -104,13 +92,15 @@ fn load_texture<P: AsRef<Path>>(gfx_queue: Arc<Queue>, path: P) -> Arc<ImageView
     ImageView::new_default(texture).unwrap()
 }
 
-impl SceneLayer {
+impl WorldLayer {
     pub fn new(
         gfx_queue: Arc<Queue>,
-        output_format: Format,
+        render_pass: Arc<RenderPass>,
         swapchain_images: &Vec<Arc<ImageView<SwapchainImage<Window>>>>,
         viewport: Viewport,
         dimensions: PhysicalSize<u32>,
+        scene: Arc<Mutex<Scene>>,
+        material_registry: Arc<Mutex<MaterialRegistry>>,
     ) -> Result<Self, Error> {
         // Have to load these in order to access DescriptorRequirements
         let dummy_vs = shader::simple_vs::load(gfx_queue.device().clone())?;
@@ -147,89 +137,23 @@ impl SceneLayer {
             },
         )?;
 
-        let render_pass = vulkano::ordered_passes_renderpass!(
-            gfx_queue.device().clone(),
-            attachments: {
-                ms_color: {
-                    load: Clear,
-                    store: DontCare,
-                    format: output_format,
-                    samples: 4,
-                },
-                depth: {
-                    load: Clear,
-                    store: DontCare,
-                    format: Format::D16_UNORM,
-                    samples: 4,
-                },
-                final_color: {
-                    load: Clear,
-                    store: Store,
-                    format: output_format,
-                    samples: 1,
-                }
-            },
-            passes: [
-                {
-                    color: [ms_color],
-                    depth_stencil: {depth},
-                    input: []
-                },
-                {
-                    color: [final_color],
-                    depth_stencil: {},
-                    input: [ms_color]
-                }
-            ]
-        )?;
-
         let (framebuffers, color_view, depth_view) =
             Self::create_framebuffers(gfx_queue.device().clone(), &render_pass, swapchain_images)?;
 
         let forward_system = ForwardSystem::new(
             gfx_queue.clone(),
             &viewport,
-            render_pass.clone(),
+            Subpass::from(render_pass.clone(), 0).unwrap(),
+            material_registry.clone(),
             common_pipeline_layout.clone(),
         )?;
 
         let screen_system = ScreenSystem::new(
             gfx_queue.clone(),
-            render_pass.clone(),
+            Subpass::from(render_pass.clone(), 1).unwrap(),
             color_view.clone(),
             &viewport,
         )?;
-
-        let scene = Scene::default();
-
-        let mat_simple_id = forward_system
-            .material_registry()
-            .lock()
-            .unwrap()
-            .get_id("simple")
-            .unwrap();
-        let model0 = Arc::new(Model::load_to_device(
-            gfx_queue.clone(),
-            "res/models/monkey.obj",
-            mat_simple_id,
-        )?);
-        let model1 = Arc::new(Model::load_to_device(
-            gfx_queue.clone(),
-            "res/models/torus.obj",
-            mat_simple_id,
-        )?);
-        let texture0 = load_texture(gfx_queue.clone(), "res/textures/texture0.png");
-        let texture1 = load_texture(gfx_queue.clone(), "res/textures/texture1.png");
-        let sampler = Sampler::new(
-            gfx_queue.device().clone(),
-            SamplerCreateInfo {
-                address_mode: [SamplerAddressMode::Repeat; 3],
-                min_filter: Filter::Nearest,
-                mag_filter: Filter::Nearest,
-                ..Default::default()
-            },
-        )
-        .unwrap();
 
         let start_time = Instant::now();
 
@@ -255,16 +179,11 @@ impl SceneLayer {
             scene_buffer,
             scene_set,
 
-            model0,
-            model1,
-            texture0,
-            texture1,
-            sampler,
-
             framebuffers,
             color_view,
             depth_view,
 
+            material_registry,
             render_pass,
 
             forward_system,
@@ -320,7 +239,7 @@ impl SceneLayer {
     }
 }
 
-impl Layer for SceneLayer {
+impl Layer for WorldLayer {
     fn on_attach(&mut self) {}
 
     fn on_detach(&mut self) {}
@@ -353,45 +272,6 @@ impl Layer for SceneLayer {
         }) = event
         {
             todo!()
-        }
-
-        // Events from other layers
-        if let Event::GameEvent(GameEvent::TestEvent) = event {
-            let mut lock = self.forward_system.material_registry().lock().unwrap();
-
-            let b = rand::random();
-            let t = rand::random();
-
-            let x = rand::random();
-            let y = rand::random();
-            let z = rand::random();
-            let position = Point3::new((x - 0.5) * 5.0, y, (z - 0.5) * 5.0);
-
-            let model = if b {
-                self.model0.clone()
-            } else {
-                self.model1.clone()
-            };
-            let texture = if t {
-                self.texture0.clone()
-            } else {
-                self.texture1.clone()
-            };
-
-            let create_info = MaterialInstanceCreateInfo::default()
-                .with_color("diffuse_color", [x, y, z, 1.0])
-                .with_texture("diffuse_map", self.sampler.clone(), texture);
-
-            let mesh = MeshObject::new(
-                self.gfx_queue.clone(),
-                model,
-                &mut lock,
-                create_info.clone(),
-            )?;
-
-            let entity = Entity::new(position, Some(mesh))?;
-
-            self.scene.add(entity);
         }
 
         Ok(false)
@@ -449,8 +329,12 @@ impl Layer for SceneLayer {
             SubpassContents::SecondaryCommandBuffers,
         )?;
 
+        let mut scene_lock = self.scene.lock().unwrap();
+
+        scene_lock.instantiate_models(&self.gfx_queue, &mut self.material_registry.lock().unwrap())?;
+
         self.forward_system
-            .do_frame(&mut builder, &self.scene_set, &self.scene)?;
+            .do_frame(&mut builder, &self.scene_set, scene_lock)?;
 
         builder.next_subpass(SubpassContents::Inline)?;
 

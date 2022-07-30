@@ -3,8 +3,6 @@ use nalgebra::{Point3, Vector3, Point2};
 
 pub mod context;
 pub mod frame;
-pub mod gui;
-pub mod scene;
 pub mod shader;
 pub mod system;
 

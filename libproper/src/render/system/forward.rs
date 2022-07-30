@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use std::sync::{Arc, Mutex};
+use std::{sync::{Arc, Mutex}, ops::{DerefMut, Deref}};
 
 use vulkano::{
     buffer::TypedBufferAccess,
@@ -23,7 +23,7 @@ use crate::{
 pub struct ForwardSystem {
     gfx_queue: Arc<Queue>,
     common_pipeline_layout: Arc<PipelineLayout>,
-    render_pass: Arc<RenderPass>,
+    subpass: Subpass,
     material_registry: Arc<Mutex<MaterialRegistry>>,
 }
 
@@ -31,21 +31,15 @@ impl ForwardSystem {
     pub fn new(
         gfx_queue: Arc<Queue>,
         viewport: &Viewport,
-        render_pass: Arc<RenderPass>,
+        subpass: Subpass,
+        material_registry: Arc<Mutex<MaterialRegistry>>,
         common_pipeline_layout: Arc<PipelineLayout>,
     ) -> Result<Self, Error> {
-        let material_registry = Arc::new(Mutex::new(MaterialRegistry::default()));
-
-        material_registry.lock().unwrap().add(
-            "simple",
-            Box::new(SimpleMaterial::new(&gfx_queue, &render_pass, viewport)?),
-        );
-
         Ok(Self {
             gfx_queue,
             common_pipeline_layout,
             material_registry,
-            render_pass,
+            subpass,
         })
     }
 
@@ -68,7 +62,7 @@ impl ForwardSystem {
             CommandBufferInheritanceInfo {
                 render_pass: Some(CommandBufferInheritanceRenderPassType::BeginRenderPass(
                     CommandBufferInheritanceRenderPassInfo {
-                        subpass: Subpass::from(self.render_pass.clone(), 0).unwrap(),
+                        subpass: self.subpass.clone(),
                         framebuffer: None,
                     },
                 )),
@@ -110,10 +104,10 @@ impl ForwardSystem {
         secondary_builder.build().unwrap()
     }
 
-    fn record_secondary_buffers(
+    fn record_secondary_buffers<T: Deref<Target = Scene>>(
         &self,
         scene_set: &Arc<PersistentDescriptorSet>,
-        scene: &Scene,
+        scene: T,
     ) -> Vec<SecondaryAutoCommandBuffer> {
         let mut cbs = vec![];
 
@@ -139,11 +133,11 @@ impl ForwardSystem {
         cbs
     }
 
-    pub fn do_frame(
+    pub fn do_frame<T: Deref<Target = Scene>>(
         &self,
         builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
         scene_set: &Arc<PersistentDescriptorSet>,
-        scene: &Scene,
+        scene: T,
     ) -> Result<(), Error> {
         let cbs = self.record_secondary_buffers(scene_set, scene);
 
@@ -154,8 +148,6 @@ impl ForwardSystem {
 
     pub fn swapchain_invalidated(&mut self, viewport: &Viewport) -> Result<(), Error> {
         self.material_registry.lock().unwrap().recreate_pipelines(
-            &self.gfx_queue,
-            &self.render_pass,
             viewport,
         )?;
 

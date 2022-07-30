@@ -27,7 +27,7 @@ use crate::{
 
 pub struct ScreenSystem {
     gfx_queue: Arc<Queue>,
-    render_pass: Arc<RenderPass>,
+    subpass: Subpass,
 
     vertex_buffer: Arc<ImmutableBuffer<[SimpleVertex]>>,
     screen_set: Arc<PersistentDescriptorSet>,
@@ -39,7 +39,7 @@ pub struct ScreenSystem {
 impl ScreenSystem {
     pub fn new(
         gfx_queue: Arc<Queue>,
-        render_pass: Arc<RenderPass>,
+        subpass: Subpass,
         color_view: Arc<ImageView<AttachmentImage>>,
         viewport: &Viewport,
     ) -> Result<Self, Error> {
@@ -79,7 +79,7 @@ impl ScreenSystem {
         let pipeline = Self::create_screen_pipeline(
             gfx_queue.device().clone(),
             viewport.clone(),
-            render_pass.clone(),
+            subpass.clone(),
             vs.clone(),
             fs.clone(),
         );
@@ -93,7 +93,7 @@ impl ScreenSystem {
 
         Ok(Self {
             gfx_queue,
-            render_pass,
+            subpass,
             vertex_buffer,
             screen_set,
             vs,
@@ -128,7 +128,7 @@ impl ScreenSystem {
         self.pipeline = Self::create_screen_pipeline(
             self.gfx_queue.device().clone(),
             viewport.clone(),
-            self.render_pass.clone(),
+            self.subpass.clone(),
             self.vs.clone(),
             self.fs.clone(),
         );
@@ -146,14 +146,14 @@ impl ScreenSystem {
     fn create_screen_pipeline(
         device: Arc<Device>,
         viewport: Viewport,
-        render_pass: Arc<RenderPass>,
+        subpass: Subpass,
         screen_vs: Arc<ShaderModule>,
         screen_fs: Arc<ShaderModule>,
     ) -> Arc<GraphicsPipeline> {
         GraphicsPipeline::start()
             .vertex_input_state(BuffersDefinition::new().vertex::<SimpleVertex>())
             .input_assembly_state(InputAssemblyState::new())
-            .render_pass(Subpass::from(render_pass, 1).unwrap())
+            .render_pass(subpass)
             .vertex_shader(screen_vs.entry_point("main").unwrap(), ())
             .fragment_shader(screen_fs.entry_point("main").unwrap(), ())
             .viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))

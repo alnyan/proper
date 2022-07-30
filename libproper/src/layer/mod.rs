@@ -3,6 +3,10 @@ use winit::event_loop::ControlFlow;
 
 use crate::{error::Error, event::Event, render::frame::Frame};
 
+pub mod world;
+pub mod logic;
+pub mod gui;
+
 pub trait Layer {
     fn on_attach(&mut self);
     fn on_detach(&mut self);

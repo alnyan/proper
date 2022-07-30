@@ -4,16 +4,16 @@ use std::sync::{Arc, Mutex};
 
 use error::Error;
 use event::{Event, GameEvent};
-use render::{
-    context::{LayerVec, VulkanContext},
-    gui::GuiLayer,
-    scene::SceneLayer,
-};
+use layer::{gui::GuiLayer, logic::LogicLayer, world::WorldLayer};
+use render::context::{LayerVec, VulkanContext};
+use resource::material::MaterialRegistry;
+use vulkano::format::Format;
 use winit::{
     event::WindowEvent,
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
+use world::scene::Scene;
 
 pub mod error;
 pub mod event;
@@ -30,8 +30,10 @@ pub struct Application {
 
 impl Application {
     pub fn new() -> Result<Self, Error> {
-        rayon::ThreadPoolBuilder::new().num_threads(24).build_global().unwrap();
-
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(24)
+            .build_global()
+            .unwrap();
         let event_loop = EventLoop::with_user_event();
         let proxy = event_loop.create_proxy();
         let layers = Arc::new(Mutex::new(vec![]));
@@ -43,14 +45,61 @@ impl Application {
             layers.clone(),
         )?;
 
-        let scene = Box::new(SceneLayer::new(
+        // TODO I still don't know where to place this lol
+        let render_pass = vulkano::ordered_passes_renderpass!(
+            render_context.gfx_queue().device().clone(),
+            attachments: {
+                ms_color: {
+                    load: Clear,
+                    store: DontCare,
+                    format: render_context.output_format(),
+                    samples: 4,
+                },
+                depth: {
+                    load: Clear,
+                    store: DontCare,
+                    format: Format::D16_UNORM,
+                    samples: 4,
+                },
+                final_color: {
+                    load: Clear,
+                    store: Store,
+                    format: render_context.output_format(),
+                    samples: 1,
+                }
+            },
+            passes: [
+                {
+                    color: [ms_color],
+                    depth_stencil: {depth},
+                    input: []
+                },
+                {
+                    color: [final_color],
+                    depth_stencil: {},
+                    input: [ms_color]
+                }
+            ]
+        )
+        .unwrap();
+
+        let material_registry = Arc::new(Mutex::new(MaterialRegistry::new(
             render_context.gfx_queue().clone(),
-            render_context.output_format(),
+            render_pass.clone(),
+            render_context.viewport().clone(),
+        )));
+        let scene = Arc::new(Mutex::new(Scene::default()));
+
+        let world_layer = Box::new(WorldLayer::new(
+            render_context.gfx_queue().clone(),
+            render_pass.clone(),
             render_context.swapchain_images(),
             render_context.viewport().clone(),
             render_context.dimensions(),
+            scene.clone(),
+            material_registry.clone(),
         )?);
-        layers.lock().unwrap().push(scene);
+        layers.lock().unwrap().push(world_layer);
 
         let gui = Box::new(GuiLayer::new(
             proxy.clone(),
@@ -58,6 +107,9 @@ impl Application {
             render_context.gfx_queue().clone(),
         ));
         layers.lock().unwrap().push(gui);
+
+        let logic_layer = Box::new(LogicLayer::new(scene, material_registry));
+        layers.lock().unwrap().push(logic_layer);
 
         Ok(Self {
             event_loop,

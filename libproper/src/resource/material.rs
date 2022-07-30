@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use vulkano::{
     buffer::{BufferUsage, ImmutableBuffer},
@@ -64,8 +64,10 @@ pub struct MaterialInstance {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MaterialTemplateId(usize);
 
-#[derive(Default)]
 pub struct MaterialRegistry {
+    gfx_queue: Arc<Queue>,
+    render_pass: Arc<RenderPass>,
+    viewport: Viewport,
     data: Vec<Box<dyn MaterialTemplate>>,
     names: BTreeMap<String, MaterialTemplateId>,
 }
@@ -74,14 +76,36 @@ unsafe impl Send for MaterialRegistry {}
 //unsafe impl<T: MaterialTemplate> Send for T {}
 
 impl MaterialRegistry {
-    pub fn recreate_pipelines(
-        &mut self,
-        gfx_queue: &Arc<Queue>,
-        render_pass: &Arc<RenderPass>,
-        viewport: &Viewport,
-    ) -> Result<(), Error> {
+    pub fn new(gfx_queue: Arc<Queue>, render_pass: Arc<RenderPass>, viewport: Viewport) -> Self {
+        Self {
+            gfx_queue,
+            render_pass,
+            viewport,
+            data: Vec::new(),
+            names: BTreeMap::new(),
+        }
+    }
+
+    pub fn get_or_load(&mut self, name: &str) -> Result<MaterialTemplateId, Error> {
+        if let Some(id) = self.get_id(name) {
+            Ok(id)
+        } else {
+            let mat = match name {
+                "simple" => Box::new(
+                    SimpleMaterial::new(&self.gfx_queue, &self.render_pass, &self.viewport)
+                        .unwrap(),
+                ),
+                _ => panic!(),
+            };
+
+            Ok(self.add(name, mat))
+        }
+    }
+
+    pub fn recreate_pipelines(&mut self, viewport: &Viewport) -> Result<(), Error> {
+        self.viewport = viewport.clone();
         for mat in self.data.iter_mut() {
-            mat.recreate_pipeline(gfx_queue, render_pass, viewport)?;
+            mat.recreate_pipeline(&self.gfx_queue, &self.render_pass, viewport)?;
         }
         Ok(())
     }
@@ -215,20 +239,18 @@ impl MaterialTemplate for SimpleMaterial {
             gfx_queue,
         )?;
 
-        let diffuse_map;
-        if let Some(map) = create_info.textures.get("diffuse_map") {
-            diffuse_map = WriteDescriptorSet::image_view_sampler(1, map.image.clone(), map.sampler.clone());
-        } else {
-            diffuse_map = WriteDescriptorSet::none(1);
-        }
+        // let diffuse_map;
+        // if let Some(map) = create_info.textures.get("diffuse_map") {
+        //     diffuse_map =
+        //         WriteDescriptorSet::image_view_sampler(1, map.image.clone(), map.sampler.clone());
+        // } else {
+        //     diffuse_map = WriteDescriptorSet::none(1);
+        // }
 
         let layout = self.pipeline.layout().set_layouts().get(1).unwrap();
         let material_set = PersistentDescriptorSet::new(
             layout.clone(),
-            vec![
-                WriteDescriptorSet::buffer(0, buffer),
-                diffuse_map,
-            ]
+            vec![WriteDescriptorSet::buffer(0, buffer) /*, diffuse_map */],
         )?;
 
         Ok((
