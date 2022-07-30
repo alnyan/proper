@@ -15,7 +15,7 @@ use vulkano::{
         },
         GraphicsPipeline, Pipeline, PipelineBindPoint,
     },
-    render_pass::{RenderPass, Subpass},
+    render_pass::Subpass,
     shader::ShaderModule,
     sync::GpuFuture,
 };

@@ -6,7 +6,7 @@ use error::Error;
 use event::{Event, GameEvent};
 use layer::{gui::GuiLayer, logic::LogicLayer, world::WorldLayer};
 use render::context::{LayerVec, VulkanContext};
-use resource::material::MaterialRegistry;
+use resource::{material::MaterialRegistry, model::ModelRegistry};
 use vulkano::format::Format;
 use winit::{
     event::WindowEvent,
@@ -88,27 +88,30 @@ impl Application {
             render_pass.clone(),
             render_context.viewport().clone(),
         )));
+        let model_registry = Arc::new(Mutex::new(ModelRegistry::new(
+            render_context.gfx_queue().clone()
+        )));
         let scene = Arc::new(Mutex::new(Scene::default()));
 
         let world_layer = Box::new(WorldLayer::new(
             render_context.gfx_queue().clone(),
-            render_pass.clone(),
+            render_pass,
+            material_registry.clone(),
             render_context.swapchain_images(),
             render_context.viewport().clone(),
             render_context.dimensions(),
             scene.clone(),
-            material_registry.clone(),
         )?);
         layers.lock().unwrap().push(world_layer);
 
         let gui = Box::new(GuiLayer::new(
-            proxy.clone(),
+            proxy,
             render_context.surface().clone(),
             render_context.gfx_queue().clone(),
         ));
         layers.lock().unwrap().push(gui);
 
-        let logic_layer = Box::new(LogicLayer::new(scene, material_registry));
+        let logic_layer = Box::new(LogicLayer::new(scene, material_registry, model_registry));
         layers.lock().unwrap().push(logic_layer);
 
         Ok(Self {
@@ -121,6 +124,7 @@ impl Application {
     pub fn run(mut self) {
         self.event_loop.run(move |event, _, flow| match event {
             winit::event::Event::UserEvent(event) => {
+                dbg!(&event);
                 Self::notify_layers(&self.layers, &Event::GameEvent(event), flow);
             }
             winit::event::Event::WindowEvent { event, .. } => {
@@ -149,7 +153,7 @@ impl Application {
 
     fn notify_layers(layers: &LayerVec, event: &Event, flow: &mut ControlFlow) {
         for layer in layers.lock().unwrap().iter_mut().rev() {
-            if layer.on_event(&event, flow).unwrap() {
+            if layer.on_event(event, flow).unwrap() {
                 break;
             }
         }

@@ -1,95 +1,80 @@
-use std::{sync::Arc, io::BufReader, fs::File, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::BufReader,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use nalgebra::Point2;
 use obj::{Obj, TexturedVertex};
 use vulkano::{
     buffer::{BufferUsage, ImmutableBuffer},
     device::Queue,
-    sync::GpuFuture
+    sync::GpuFuture,
 };
 
-use crate::{error::Error, render::Vertex};
+use crate::{error::Error, render::Vertex, world::scene::MeshObject};
 
-use super::material::MaterialTemplateId;
-
-pub enum Storage {
-    Host(String),
-    Device(Arc<ImmutableBuffer<[Vertex]>>),
-}
+use super::material::{MaterialInstanceCreateInfo, MaterialTemplate};
 
 pub struct Model {
-    data: Storage,
-    material_template_id: MaterialTemplateId,
+    data: Arc<ImmutableBuffer<[Vertex]>>,
+    material_template: Arc<dyn MaterialTemplate>,
+}
+
+pub struct ModelRegistry {
+    gfx_queue: Arc<Queue>,
+    data: BTreeMap<String, Arc<Model>>,
 }
 
 impl Model {
     pub fn new<I>(
         gfx_queue: Arc<Queue>,
         vertices: I,
-        material_template_id: MaterialTemplateId,
+        material_template: Arc<dyn MaterialTemplate>,
     ) -> Result<Self, Error>
     where
         I: IntoIterator<Item = Vertex>,
         I::IntoIter: ExactSizeIterator,
     {
         let (buffer, init) =
-            ImmutableBuffer::from_iter(vertices, BufferUsage::vertex_buffer(), gfx_queue.clone())?;
+            ImmutableBuffer::from_iter(vertices, BufferUsage::vertex_buffer(), gfx_queue)?;
 
         init.then_signal_fence_and_flush()?.wait(None).unwrap();
 
         Ok(Self {
-            data: Storage::Device(buffer),
-            material_template_id,
+            data: buffer,
+            material_template,
         })
     }
 
-    pub fn host(
-        path: &str,
-        material_template_id: MaterialTemplateId,
-    ) -> Self {
-        Self {
-            data: Storage::Host(path.to_owned()),
-            material_template_id,
-        }
-    }
-
-    pub fn load_to_device(gfx_queue: Arc<Queue>, path: &str, material_template_id: MaterialTemplateId) -> Result<Self, Error> {
-        let data = Self::load_obj(gfx_queue.clone(), path)?;
+    pub fn load_to_device<P: AsRef<Path>>(
+        gfx_queue: Arc<Queue>,
+        path: P,
+        material_template: Arc<dyn MaterialTemplate>,
+    ) -> Result<Self, Error> {
+        let data = Self::load_obj(gfx_queue, path)?;
         Ok(Self {
             data,
-            material_template_id
+            material_template,
         })
     }
 
     #[inline]
-    pub const fn is_loaded(&self) -> bool {
-        matches!(self.data, Storage::Device(_))
+    pub const fn data(&self) -> &Arc<ImmutableBuffer<[Vertex]>> {
+        &self.data
     }
 
     #[inline]
-    pub const fn data(&self) -> Option<&Arc<ImmutableBuffer<[Vertex]>>> {
-        if let Storage::Device(data) = &self.data {
-            Some(data)
-        } else {
-            None
-        }
+    pub const fn material_template(&self) -> &Arc<dyn MaterialTemplate> {
+        &self.material_template
     }
 
-    #[inline]
-    pub const fn material_template_id(&self) -> MaterialTemplateId {
-        self.material_template_id
-    }
-
-    pub fn load(&mut self, gfx_queue: Arc<Queue>) -> Result<(), Error> {
-        if let Storage::Host(path) = &self.data {
-            self.data = Self::load_obj(gfx_queue, path)?;
-            Ok(())
-        } else {
-            Err(Error::AlreadyLoaded)
-        }
-    }
-
-    fn load_obj<P: AsRef<Path>>(gfx_queue: Arc<Queue>, path: P) -> Result<Storage, Error> {
+    fn load_obj<P: AsRef<Path>>(
+        gfx_queue: Arc<Queue>,
+        path: P,
+    ) -> Result<Arc<ImmutableBuffer<[Vertex]>>, Error> {
         let input = BufReader::new(File::open(path).unwrap());
         let obj: Obj<TexturedVertex> = obj::load_obj(input).unwrap();
 
@@ -107,112 +92,58 @@ impl Model {
 
         init.then_signal_fence_and_flush()?.wait(None).unwrap();
 
-        Ok(Storage::Device(buffer))
+        Ok(buffer)
+    }
+}
+
+impl ModelRegistry {
+    pub fn new(gfx_queue: Arc<Queue>) -> Self {
+        Self {
+            gfx_queue,
+            data: BTreeMap::new(),
+        }
     }
 
-    // // Helper constructors for debugging
-    // pub fn triangle(
-    //     gfx_queue: Arc<Queue>,
-    //     material_template_id: MaterialTemplateId,
-    // ) -> Result<Self, Error> {
-    //     let vertices = vec![
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, -0.5, 0.0),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.0, 0.5, 0.0),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.5, -0.5, 0.0),
-    //         },
-    //     ];
+    pub fn create_mesh_object(
+        &mut self,
+        name: &str,
+        material_template: Arc<dyn MaterialTemplate>,
+        material_create_info: MaterialInstanceCreateInfo,
+    ) -> Result<MeshObject, Error> {
+        let model = self.get_or_load(name, material_template.clone())?;
+        let mesh = MeshObject::new(
+            self.gfx_queue.clone(),
+            model,
+            material_template,
+            material_create_info,
+        )?;
 
-    //     Self::new(gfx_queue, vertices, material_template_id)
-    // }
+        Ok(mesh)
+    }
 
-    // pub fn cube(
-    //     gfx_queue: Arc<Queue>,
-    //     material_template_id: MaterialTemplateId,
-    // ) -> Result<Self, Error> {
-    //     let vertices = vec![
-    //         // Front
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, -0.5, -0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.5, -0.5, -0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.5, 0.5, -0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.5, 0.5, -0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, 0.5, -0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, -0.5, -0.5),
-    //         },
-    //         // Right
-    //         Vertex {
-    //             v_position: Point3::new(0.5, -0.5, -0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.5, -0.5, 0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.5, 0.5, 0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.5, 0.5, 0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.5, 0.5, -0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.5, -0.5, -0.5),
-    //         },
-    //         // Back
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, -0.5, 0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.5, -0.5, 0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.5, 0.5, 0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(0.5, 0.5, 0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, 0.5, 0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, -0.5, 0.5),
-    //         },
-    //         // Left
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, -0.5, -0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, -0.5, 0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, 0.5, 0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, 0.5, 0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, 0.5, -0.5),
-    //         },
-    //         Vertex {
-    //             v_position: Point3::new(-0.5, -0.5, -0.5),
-    //         },
-    //     ];
+    pub fn get_or_load(
+        &mut self,
+        name: &str,
+        material_template: Arc<dyn MaterialTemplate>,
+    ) -> Result<Arc<Model>, Error> {
+        if let Some(model) = self.data.get(name) {
+            // TODO check material ID
+            Ok(model.clone())
+        } else {
+            log::info!("Loading model {:?}", name);
 
-    //     Self::new(gfx_queue, vertices, material_template_id)
-    // }
+            let filename = name.to_owned() + ".obj";
+            let mut path = PathBuf::from("res/models/");
+            path.push(filename);
+
+            let data = Arc::new(Model::load_to_device(
+                self.gfx_queue.clone(),
+                path,
+                material_template,
+            )?);
+
+            self.data.insert(name.to_owned(), data.clone());
+            Ok(data)
+        }
+    }
 }

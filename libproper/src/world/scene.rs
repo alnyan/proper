@@ -1,4 +1,4 @@
-use std::{ops::DerefMut, sync::Arc};
+use std::sync::{Arc, atomic::Ordering};
 
 use bytemuck::Zeroable;
 use nalgebra::Matrix4;
@@ -14,9 +14,7 @@ use crate::{
     error::Error,
     render::shader,
     resource::{
-        material::{
-            MaterialInstance, MaterialInstanceCreateInfo, MaterialRegistry, MaterialTemplateId,
-        },
+        material::{MaterialInstance, MaterialInstanceCreateInfo, MaterialTemplate},
         model::Model,
     },
 };
@@ -31,7 +29,7 @@ pub struct Scene {
 }
 
 pub struct MaterialEntityGroup {
-    material_template_id: MaterialTemplateId,
+    pub material_template: Arc<dyn MaterialTemplate>,
     pub entities: Vec<Entity>,
 }
 
@@ -52,37 +50,21 @@ impl Scene {
         self.data.iter_mut()
     }
 
-    pub fn instantiate_models<I: DerefMut<Target = MaterialRegistry>>(
-        &mut self,
-        gfx_queue: &Arc<Queue>,
-        material_registry: &mut I,
-    ) -> Result<(), Error> {
-        while let Some(mut entity) = self.loading_list.pop() {
-            entity.instantiate(gfx_queue.clone(), material_registry)?;
-
-            self.add(entity);
-        }
-        Ok(())
-    }
-
     pub fn add(&mut self, entity: Entity) {
-        if let Some(mesh) = entity.mesh() {
-            let material_template_id = mesh.model_material_template_id();
+        let material_template = entity.mesh().model().material_template();
+        let id = material_template.id().load(Ordering::Acquire);
 
-            if let Some(group) = self
-                .data
-                .iter_mut()
-                .find(|p| p.material_template_id == material_template_id)
-            {
-                group.entities.push(entity);
-            } else {
-                self.data.push(MaterialEntityGroup {
-                    material_template_id,
-                    entities: vec![entity],
-                });
-            }
+        if let Some(group) = self
+            .data
+            .iter_mut()
+            .find(|p| id == p.material_template.id().load(Ordering::Acquire))
+        {
+            group.entities.push(entity);
         } else {
-            self.loading_list.push(entity);
+            self.data.push(MaterialEntityGroup {
+                material_template: material_template.clone(),
+                entities: vec![entity],
+            });
         }
     }
 }
@@ -92,18 +74,13 @@ impl MaterialEntityGroup {
     pub fn iter(&self) -> impl Iterator<Item = &Entity> {
         self.entities.iter()
     }
-
-    #[inline]
-    pub const fn material_template_id(&self) -> MaterialTemplateId {
-        self.material_template_id
-    }
 }
 
 impl MeshObject {
-    pub fn new<I: DerefMut<Target = MaterialRegistry>>(
+    pub fn new(
         gfx_queue: Arc<Queue>,
         model: Arc<Model>,
-        material_registry: &mut I,
+        material_template: Arc<dyn MaterialTemplate>,
         material_instance_create_info: MaterialInstanceCreateInfo,
     ) -> Result<Self, Error> {
         let model_buffer = CpuAccessibleBuffer::from_data(
@@ -113,13 +90,8 @@ impl MeshObject {
             Zeroable::zeroed(),
         )?;
 
-        let material_template = material_registry.get(model.material_template_id());
-        let model_layout = material_template
-            .pipeline()
-            .layout()
-            .set_layouts()
-            .get(2)
-            .unwrap();
+        let pipeline_lock = material_template.pipeline().read().unwrap();
+        let model_layout = pipeline_lock.layout().set_layouts().get(2).unwrap();
         let (material_instance, init) =
             material_template.create_instance(gfx_queue, material_instance_create_info)?;
 
@@ -153,11 +125,6 @@ impl MeshObject {
     #[inline]
     pub const fn model_set(&self) -> &Arc<PersistentDescriptorSet> {
         &self.model_set
-    }
-
-    #[inline]
-    pub fn model_material_template_id(&self) -> MaterialTemplateId {
-        self.model.material_template_id()
     }
 
     pub const fn material_instance(&self) -> &MaterialInstance {

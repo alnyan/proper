@@ -1,4 +1,7 @@
-use std::{path::Path, sync::{Arc, Mutex}, time::Instant};
+use std::{
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use nalgebra::{Matrix4, Point3, Vector3};
 use vulkano::{
@@ -12,13 +15,9 @@ use vulkano::{
     },
     device::{Device, Queue},
     format::{ClearValue, Format},
-    image::{
-        view::ImageView, AttachmentImage, ImageDimensions, ImageViewAbstract, ImmutableImage,
-        MipmapsCount, SampleCount, SwapchainImage,
-    },
+    image::{view::ImageView, AttachmentImage, ImageViewAbstract, SampleCount, SwapchainImage},
     pipeline::{graphics::viewport::Viewport, layout::PipelineLayoutCreateInfo, PipelineLayout},
     render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass},
-    sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo},
     sync::GpuFuture,
 };
 use winit::{
@@ -30,13 +29,15 @@ use winit::{
 
 use crate::{
     error::Error,
-    event::{Event, GameEvent},
+    event::Event,
     layer::Layer,
-    resource::{material::{MaterialInstanceCreateInfo, MaterialRegistry}, model::Model},
-    world::{
-        entity::Entity,
-        scene::{MeshObject, Scene},
-    }, render::{shader, system::{forward::ForwardSystem, screen::ScreenSystem}, frame::Frame},
+    render::{
+        frame::Frame,
+        shader,
+        system::{forward::ForwardSystem, screen::ScreenSystem},
+    },
+    resource::material::MaterialRegistry,
+    world::scene::Scene,
 };
 
 type FramebufferCreateOutput = (
@@ -65,42 +66,15 @@ pub struct WorldLayer {
     dimensions: (f32, f32),
 }
 
-fn load_texture<P: AsRef<Path>>(gfx_queue: Arc<Queue>, path: P) -> Arc<ImageView<ImmutableImage>> {
-    let image = image::open(path).unwrap();
-    let width = image.width();
-    let height = image.height();
-    let data = image.into_rgba8();
-
-    let (texture, init) = ImmutableImage::from_iter(
-        data.into_raw(),
-        ImageDimensions::Dim2d {
-            width,
-            height,
-            array_layers: 1,
-        },
-        MipmapsCount::One,
-        Format::R8G8B8A8_UNORM,
-        gfx_queue,
-    )
-    .unwrap();
-
-    init.then_signal_fence_and_flush()
-        .unwrap()
-        .wait(None)
-        .unwrap();
-
-    ImageView::new_default(texture).unwrap()
-}
-
 impl WorldLayer {
     pub fn new(
         gfx_queue: Arc<Queue>,
         render_pass: Arc<RenderPass>,
+        material_registry: Arc<Mutex<MaterialRegistry>>,
         swapchain_images: &Vec<Arc<ImageView<SwapchainImage<Window>>>>,
         viewport: Viewport,
         dimensions: PhysicalSize<u32>,
         scene: Arc<Mutex<Scene>>,
-        material_registry: Arc<Mutex<MaterialRegistry>>,
     ) -> Result<Self, Error> {
         // Have to load these in order to access DescriptorRequirements
         let dummy_vs = shader::simple_vs::load(gfx_queue.device().clone())?;
@@ -142,9 +116,7 @@ impl WorldLayer {
 
         let forward_system = ForwardSystem::new(
             gfx_queue.clone(),
-            &viewport,
             Subpass::from(render_pass.clone(), 0).unwrap(),
-            material_registry.clone(),
             common_pipeline_layout.clone(),
         )?;
 
@@ -258,7 +230,10 @@ impl Layer for WorldLayer {
                 swapchain_images,
             )?;
 
-            self.forward_system.swapchain_invalidated(viewport)?;
+            self.material_registry
+                .lock()
+                .unwrap()
+                .recreate_pipelines(viewport)?;
             self.screen_system
                 .swapchain_invalidated(viewport, self.color_view.clone())?;
             return Ok(false);
@@ -329,9 +304,7 @@ impl Layer for WorldLayer {
             SubpassContents::SecondaryCommandBuffers,
         )?;
 
-        let mut scene_lock = self.scene.lock().unwrap();
-
-        scene_lock.instantiate_models(&self.gfx_queue, &mut self.material_registry.lock().unwrap())?;
+        let scene_lock = self.scene.lock().unwrap();
 
         self.forward_system
             .do_frame(&mut builder, &self.scene_set, scene_lock)?;

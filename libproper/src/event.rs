@@ -19,6 +19,7 @@ pub enum Event<'a> {
     GameEvent(GameEvent),
 }
 
+#[derive(Debug)]
 pub enum GameEvent {
     TestEvent
 }

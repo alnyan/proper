@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, RwLock,
+    },
+};
 
 use vulkano::{
     buffer::{BufferUsage, ImmutableBuffer},
@@ -29,20 +35,23 @@ use crate::{
 
 pub trait MaterialTemplate: Send + Sync {
     fn recreate_pipeline(
-        &mut self,
+        &self,
         gfx_queue: &Arc<Queue>,
         render_pass: &Arc<RenderPass>,
         viewport: &Viewport,
     ) -> Result<(), Error>;
 
-    fn pipeline(&self) -> &Arc<GraphicsPipeline>;
+    fn pipeline(&self) -> &RwLock<Arc<GraphicsPipeline>>;
     fn create_instance(
         &self,
         gfx_queue: Arc<Queue>,
         create_info: MaterialInstanceCreateInfo,
     ) -> Result<(MaterialInstance, Box<dyn GpuFuture>), Error>;
+
+    fn id(&self) -> &AtomicU64;
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct SampledImage {
     image: Arc<ImageView<ImmutableImage>>,
@@ -60,20 +69,15 @@ pub struct MaterialInstance {
     material_set: Arc<PersistentDescriptorSet>,
 }
 
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct MaterialTemplateId(usize);
-
 pub struct MaterialRegistry {
     gfx_queue: Arc<Queue>,
     render_pass: Arc<RenderPass>,
     viewport: Viewport,
-    data: Vec<Box<dyn MaterialTemplate>>,
-    names: BTreeMap<String, MaterialTemplateId>,
+    last_id: u64,
+    data: BTreeMap<String, Arc<dyn MaterialTemplate>>,
 }
 
 unsafe impl Send for MaterialRegistry {}
-//unsafe impl<T: MaterialTemplate> Send for T {}
 
 impl MaterialRegistry {
     pub fn new(gfx_queue: Arc<Queue>, render_pass: Arc<RenderPass>, viewport: Viewport) -> Self {
@@ -81,48 +85,45 @@ impl MaterialRegistry {
             gfx_queue,
             render_pass,
             viewport,
-            data: Vec::new(),
-            names: BTreeMap::new(),
+            last_id: 0,
+            data: BTreeMap::new(),
         }
     }
 
-    pub fn get_or_load(&mut self, name: &str) -> Result<MaterialTemplateId, Error> {
-        if let Some(id) = self.get_id(name) {
-            Ok(id)
+    pub fn get_or_load(&mut self, name: &str) -> Result<Arc<dyn MaterialTemplate>, Error> {
+        if let Some(template) = self.get(name) {
+            Ok(template.clone())
         } else {
+            self.last_id += 1;
+            let id = self.last_id;
+            log::info!("Loading material {:?} (#{})", name, id);
+
             let mat = match name {
-                "simple" => Box::new(
+                "simple" => Arc::new(
                     SimpleMaterial::new(&self.gfx_queue, &self.render_pass, &self.viewport)
                         .unwrap(),
                 ),
                 _ => panic!(),
             };
 
-            Ok(self.add(name, mat))
+            mat.id().store(id, Ordering::Release);
+
+            self.data.insert(name.to_owned(), mat.clone());
+
+            Ok(mat)
         }
     }
 
     pub fn recreate_pipelines(&mut self, viewport: &Viewport) -> Result<(), Error> {
         self.viewport = viewport.clone();
-        for mat in self.data.iter_mut() {
+        for mat in self.data.values_mut() {
             mat.recreate_pipeline(&self.gfx_queue, &self.render_pass, viewport)?;
         }
         Ok(())
     }
 
-    pub fn add(&mut self, name: &str, mat: Box<dyn MaterialTemplate>) -> MaterialTemplateId {
-        let id = MaterialTemplateId(self.data.len());
-        self.names.insert(name.to_owned(), id);
-        self.data.push(mat);
-        id
-    }
-
-    pub fn get_id(&self, name: &str) -> Option<MaterialTemplateId> {
-        self.names.get(name).cloned()
-    }
-
-    pub fn get(&self, id: MaterialTemplateId) -> &dyn MaterialTemplate {
-        self.data[id.0].as_ref()
+    pub fn get(&self, name: &str) -> Option<&Arc<dyn MaterialTemplate>> {
+        self.data.get(name)
     }
 }
 
@@ -162,9 +163,10 @@ impl MaterialInstanceCreateInfo {
 // Specific materials
 
 pub struct SimpleMaterial {
-    pipeline: Arc<GraphicsPipeline>,
+    pipeline: RwLock<Arc<GraphicsPipeline>>,
     vs: Arc<ShaderModule>,
     fs: Arc<ShaderModule>,
+    id: AtomicU64,
 }
 
 impl SimpleMaterial {
@@ -175,9 +177,20 @@ impl SimpleMaterial {
     ) -> Result<Self, Error> {
         let vs = shader::simple_vs::load(gfx_queue.device().clone())?;
         let fs = shader::simple_fs::load(gfx_queue.device().clone())?;
-        let pipeline = Self::create_pipeline(gfx_queue, render_pass, viewport.clone(), &vs, &fs)?;
+        let pipeline = RwLock::new(Self::create_pipeline(
+            gfx_queue,
+            render_pass,
+            viewport.clone(),
+            &vs,
+            &fs,
+        )?);
 
-        Ok(Self { pipeline, vs, fs })
+        Ok(Self {
+            pipeline,
+            vs,
+            fs,
+            id: AtomicU64::new(0),
+        })
     }
 
     fn create_pipeline(
@@ -215,13 +228,18 @@ impl SimpleMaterial {
 }
 
 impl MaterialTemplate for SimpleMaterial {
+    fn id(&self) -> &AtomicU64 {
+        &self.id
+    }
+
     fn recreate_pipeline(
-        &mut self,
+        &self,
         gfx_queue: &Arc<Queue>,
         render_pass: &Arc<RenderPass>,
         viewport: &Viewport,
     ) -> Result<(), Error> {
-        self.pipeline =
+        let mut lock = self.pipeline.write().unwrap();
+        *lock =
             Self::create_pipeline(gfx_queue, render_pass, viewport.clone(), &self.vs, &self.fs)?;
         Ok(())
     }
@@ -247,10 +265,13 @@ impl MaterialTemplate for SimpleMaterial {
         //     diffuse_map = WriteDescriptorSet::none(1);
         // }
 
-        let layout = self.pipeline.layout().set_layouts().get(1).unwrap();
+        let pipeline_lock = self.pipeline.read().unwrap();
+        let layout = pipeline_lock.layout().set_layouts().get(1).unwrap();
         let material_set = PersistentDescriptorSet::new(
             layout.clone(),
-            vec![WriteDescriptorSet::buffer(0, buffer) /*, diffuse_map */],
+            vec![
+                WriteDescriptorSet::buffer(0, buffer), /*, diffuse_map */
+            ],
         )?;
 
         Ok((
@@ -262,7 +283,7 @@ impl MaterialTemplate for SimpleMaterial {
         ))
     }
 
-    fn pipeline(&self) -> &Arc<GraphicsPipeline> {
+    fn pipeline(&self) -> &RwLock<Arc<GraphicsPipeline>> {
         &self.pipeline
     }
 }
