@@ -520,7 +520,7 @@ dependencies = [
 [[package]]
 name = "egui_winit_vulkano"
 version = "0.18.0"
-source = "git+https://github.com/hakolao/egui_winit_vulkano#a86c989139088a77f842658903720f63823d97fc"
+source = "git+https://github.com/hakolao/egui_winit_vulkano#71c6d3b37f6da08b714dd207de27e9fc86494316"
 dependencies = [
  "ahash",
  "bytemuck",

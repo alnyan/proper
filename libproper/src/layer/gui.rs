@@ -2,9 +2,17 @@ use std::sync::Arc;
 
 use egui_winit_vulkano::{egui, Gui};
 use vulkano::{device::Queue, swapchain::Surface, sync::GpuFuture};
-use winit::{event_loop::{ControlFlow, EventLoopProxy}, window::Window};
+use winit::{
+    event_loop::{ControlFlow, EventLoopProxy},
+    window::Window,
+};
 
-use crate::{error::Error, event::{Event, GameEvent}, layer::Layer, render::frame::Frame};
+use crate::{
+    error::Error,
+    event::{Event, GameEvent},
+    layer::Layer,
+    render::frame::Frame,
+};
 
 pub struct GuiLayer {
     inner: Gui,
@@ -12,8 +20,12 @@ pub struct GuiLayer {
 }
 
 impl GuiLayer {
-    pub fn new(event_proxy: EventLoopProxy<GameEvent>, surface: Arc<Surface<Window>>, gfx_queue: Arc<Queue>) -> Self {
-        let inner = Gui::new(surface, gfx_queue, true);
+    pub fn new(
+        event_proxy: EventLoopProxy<GameEvent>,
+        surface: Arc<Surface<Window>>,
+        gfx_queue: Arc<Queue>,
+    ) -> Self {
+        let inner = Gui::new(surface, None, gfx_queue, true);
         Self { inner, event_proxy }
     }
 }
@@ -22,6 +34,10 @@ impl Layer for GuiLayer {
     fn on_attach(&mut self) {}
 
     fn on_detach(&mut self) {}
+
+    fn on_tick(&mut self, _delta: f64) -> Result<(), Error> {
+        Ok(())
+    }
 
     fn on_event(&mut self, event: &Event, _: &mut ControlFlow) -> Result<bool, Error> {
         if let Event::WindowEventWrapped(event) = event {

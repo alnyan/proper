@@ -17,7 +17,7 @@ void main() {
 
     float cos_theta = clamp(dot(m_normal, -c_light_direction), 0, 1);
 
-    vec3 color_out = color_in * cos_theta;
+    vec3 color_out = color_in * cos_theta + color_in * 0.1;
 
     f_color = vec4(color_out, mat.diffuse_color.a);
 }

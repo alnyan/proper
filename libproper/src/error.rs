@@ -72,12 +72,12 @@ pub enum Error {
     ImageCreation(#[from] ImageCreationError),
     #[error("Failed to create framebuffer")]
     FramebufferCreation(#[from] FramebufferCreationError),
-    #[error("Failed to create immutable buffer")]
-    ImmutableBufferCreation(#[from] ImmutableBufferCreationError),
+    #[error("Failed to create device-local buffer")]
+    DeviceLocalBufferCreation(#[from] ImmutableBufferCreationError),
 
     #[error("Failed to acquire buffer write lock")]
     BufferWriteLock(#[from] WriteLockError),
 
     #[error("Resource is already loaded")]
-    AlreadyLoaded
+    AlreadyLoaded,
 }

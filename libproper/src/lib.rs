@@ -1,6 +1,9 @@
 #![allow(clippy::into_iter_on_ref)]
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use error::Error;
 use event::{Event, GameEvent};
@@ -9,7 +12,7 @@ use render::context::VulkanContext;
 use resource::{material::MaterialRegistry, model::ModelRegistry, texture::TextureRegistry};
 use vulkano::format::Format;
 use winit::{
-    event::WindowEvent,
+    event::{DeviceEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
@@ -104,22 +107,24 @@ impl Application {
             render_context.dimensions(),
             scene.clone(),
         )?);
-        layers.push(world_layer);
 
         let gui = Box::new(GuiLayer::new(
-            proxy,
+            proxy.clone(),
             render_context.surface().clone(),
             render_context.gfx_queue().clone(),
         ));
-        layers.push(gui);
 
         let logic_layer = Box::new(LogicLayer::new(
+            proxy,
             scene,
             material_registry,
             model_registry,
             texture_registry,
         ));
+
+        layers.push(world_layer);
         layers.push(logic_layer);
+        layers.push(gui);
 
         Ok(Self {
             event_loop,
@@ -129,37 +134,72 @@ impl Application {
     }
 
     pub fn run(mut self) {
-        self.event_loop.run(move |event, _, flow| match event {
-            winit::event::Event::UserEvent(event) => {
-                Self::notify_layers(&mut self.layers, &Event::GameEvent(event), flow);
-            }
-            winit::event::Event::WindowEvent { event, .. } => {
-                if let WindowEvent::Resized(_) = event {
-                    self.render_context.invalidate_surface();
-                }
+        let mut t0 = Instant::now();
+        let mut mouse_grabbed = false;
 
-                // TODO there's no game logic, so quit event is handled right here
-                if let WindowEvent::CloseRequested = event {
-                    *flow = ControlFlow::Exit;
-                    return;
-                }
+        self.event_loop.run(move |event, _, flow| {
+            let t = Instant::now();
+            let delta = (t - t0).as_secs_f64();
+            for layer in self.layers.iter_mut() {
+                layer.on_tick(delta).unwrap();
+            }
+            t0 = t;
 
-                if let Ok(event) = Event::try_from(&event) {
-                    Self::notify_layers(&mut self.layers, &event, flow);
-                } else {
-                    log::info!("Ignoring unhandled event: {:?}", event);
+            match event {
+                winit::event::Event::DeviceEvent { event, .. } => {
+                    if mouse_grabbed {
+                        if let DeviceEvent::MouseMotion { delta } = event {
+                            Self::notify_layers(&mut self.layers, &Event::MouseMotion(delta), flow);
+                        }
+                    }
                 }
+                winit::event::Event::UserEvent(event) => {
+                    // TODO WindowLayer
+                    if let GameEvent::SetMouseGrab(grab) = event {
+                        if grab {
+                            self.render_context.window().set_cursor_grab(true).unwrap();
+                            self.render_context.window().set_cursor_visible(false);
+                        } else {
+                            self.render_context.window().set_cursor_grab(false).unwrap();
+                            self.render_context.window().set_cursor_visible(true);
+                        }
+                        mouse_grabbed = grab;
+                    }
+
+                    Self::notify_layers(&mut self.layers, &Event::GameEvent(event), flow);
+                }
+                winit::event::Event::WindowEvent { event, .. } => {
+                    if let WindowEvent::Resized(_) = event {
+                        self.render_context.invalidate_surface();
+                    }
+
+                    // TODO there's no game logic, so quit event is handled right here
+                    if let WindowEvent::CloseRequested = event {
+                        *flow = ControlFlow::Exit;
+                        return;
+                    }
+
+                    if let WindowEvent::CursorMoved { .. } = event && mouse_grabbed {
+                        return;
+                    }
+
+                    if let Ok(event) = Event::try_from(&event) {
+                        Self::notify_layers(&mut self.layers, &event, flow);
+                    } else {
+                        log::info!("Ignoring unhandled event: {:?}", event);
+                    }
+                }
+                winit::event::Event::RedrawEventsCleared => {
+                    self.render_context
+                        .do_frame(flow, &mut self.layers)
+                        .unwrap();
+                }
+                _ => (),
             }
-            winit::event::Event::RedrawEventsCleared => {
-                self.render_context
-                    .do_frame(flow, &mut self.layers)
-                    .unwrap();
-            }
-            _ => (),
         });
     }
 
-    fn notify_layers(layers: &mut Vec<Box<dyn Layer>>, event: &Event, flow: &mut ControlFlow) {
+    fn notify_layers(layers: &mut [Box<dyn Layer>], event: &Event, flow: &mut ControlFlow) {
         for layer in layers.iter_mut().rev() {
             if layer.on_event(event, flow).unwrap() {
                 break;

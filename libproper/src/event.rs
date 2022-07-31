@@ -14,6 +14,7 @@ pub enum Event<'a> {
     },
     WindowResized(PhysicalSize<u32>),
     WindowCloseRequested,
+    MouseMotion((f64, f64)),
     // Required for egui-winit compat
     WindowEventWrapped(&'a WindowEvent<'a>),
     GameEvent(GameEvent),
@@ -21,7 +22,8 @@ pub enum Event<'a> {
 
 #[derive(Debug)]
 pub enum GameEvent {
-    TestEvent
+    TestEvent,
+    SetMouseGrab(bool)
 }
 
 impl<'a> TryFrom<&'a WindowEvent<'a>> for Event<'a> {

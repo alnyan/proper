@@ -113,6 +113,10 @@ impl VulkanContext {
         &self.viewport
     }
 
+    pub fn window(&self) -> &Window {
+        self.surface.window()
+    }
+
     pub fn dimensions(&self) -> PhysicalSize<u32> {
         self.surface.window().inner_size()
     }
@@ -128,7 +132,7 @@ impl VulkanContext {
     pub fn do_frame(
         &mut self,
         flow: &mut ControlFlow,
-        layers: &mut Vec<Box<dyn Layer>>,
+        layers: &mut [Box<dyn Layer>],
     ) -> Result<(), Error> {
         if self.need_swapchain_recreation {
             let dimensions = self.recreate_swapchain()?;

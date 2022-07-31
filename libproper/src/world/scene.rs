@@ -19,11 +19,12 @@ use crate::{
     },
 };
 
-use super::entity::Entity;
+use super::{entity::Entity, camera::Camera};
 
 #[derive(Default)]
 pub struct Scene {
     // Renderable entities, sorted by material template
+    pub camera: Camera,
     pub data: Vec<MaterialEntityGroup>,
     pub loading_list: Vec<Entity>,
 }

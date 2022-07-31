@@ -1,9 +1,6 @@
-use std::{
-    sync::{Arc, Mutex},
-    time::Instant,
-};
+use std::sync::{Arc, Mutex};
 
-use nalgebra::{Matrix4, Point3, Vector3};
+use nalgebra::{Matrix4, Vector3};
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
     command_buffer::{
@@ -20,12 +17,7 @@ use vulkano::{
     render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass},
     sync::GpuFuture,
 };
-use winit::{
-    dpi::PhysicalSize,
-    event::{ElementState, MouseButton, WindowEvent},
-    event_loop::ControlFlow,
-    window::Window,
-};
+use winit::{dpi::PhysicalSize, event_loop::ControlFlow, window::Window};
 
 use crate::{
     error::Error,
@@ -62,7 +54,6 @@ pub struct WorldLayer {
     forward_system: ForwardSystem,
     screen_system: ScreenSystem,
 
-    start_time: Instant,
     dimensions: (f32, f32),
 }
 
@@ -127,8 +118,6 @@ impl WorldLayer {
             &viewport,
         )?;
 
-        let start_time = Instant::now();
-
         let scene_buffer = unsafe {
             CpuAccessibleBuffer::uninitialized(
                 gfx_queue.device().clone(),
@@ -162,7 +151,6 @@ impl WorldLayer {
             screen_system,
 
             scene,
-            start_time,
         })
     }
 
@@ -216,6 +204,10 @@ impl Layer for WorldLayer {
 
     fn on_detach(&mut self) {}
 
+    fn on_tick(&mut self, _delta: f64) -> Result<(), Error> {
+        Ok(())
+    }
+
     fn on_event(&mut self, event: &Event, _: &mut ControlFlow) -> Result<bool, Error> {
         if let Event::SwapchainInvalidated {
             swapchain_images,
@@ -239,16 +231,6 @@ impl Layer for WorldLayer {
             return Ok(false);
         }
 
-        // Click on the scene, TODO
-        if let Event::WindowEventWrapped(WindowEvent::MouseInput {
-            state: ElementState::Pressed,
-            button: MouseButton::Left,
-            ..
-        }) = event
-        {
-            todo!()
-        }
-
         Ok(false)
     }
 
@@ -257,16 +239,14 @@ impl Layer for WorldLayer {
         in_future: Box<dyn GpuFuture>,
         frame: &Frame,
     ) -> Result<Box<dyn GpuFuture>, Error> {
+        let scene_lock = self.scene.lock().unwrap();
+
         {
             let mut data = self.scene_buffer.write()?;
 
-            let now = Instant::now();
-            let t = (now - self.start_time).as_secs_f64();
-
-            let camera_position = Point3::new(t.cos() as f32 * 5.0, 5.0, t.sin() as f32 * 5.0);
             let view = Matrix4::look_at_rh(
-                &camera_position,
-                &Point3::new(0.0, 0.0, 0.0),
+                scene_lock.camera.position(),
+                &(scene_lock.camera.position() + scene_lock.camera.forward()),
                 &Vector3::new(0.0, 1.0, 0.0),
             );
             let projection =
@@ -303,8 +283,6 @@ impl Layer for WorldLayer {
             render_pass_begin_info,
             SubpassContents::SecondaryCommandBuffers,
         )?;
-
-        let scene_lock = self.scene.lock().unwrap();
 
         self.forward_system
             .do_frame(&mut builder, &self.scene_set, scene_lock)?;
