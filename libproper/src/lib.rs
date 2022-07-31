@@ -7,7 +7,7 @@ use std::{
 
 use error::Error;
 use event::{Event, GameEvent};
-use layer::{gui::GuiLayer, logic::LogicLayer, world::WorldLayer, Layer};
+use layer::{gui::GuiLayer, logic::LogicLayer, world::WorldLayer, LayerManager};
 use render::context::VulkanContext;
 use resource::{material::MaterialRegistry, model::ModelRegistry, texture::TextureRegistry};
 use vulkano::format::Format;
@@ -28,7 +28,7 @@ pub mod world;
 pub struct Application {
     event_loop: EventLoop<GameEvent>,
     render_context: VulkanContext,
-    layers: Vec<Box<dyn Layer>>,
+    layer_manager: LayerManager
 }
 
 impl Application {
@@ -39,7 +39,6 @@ impl Application {
             .unwrap();
         let event_loop = EventLoop::with_user_event();
         let proxy = event_loop.create_proxy();
-        let mut layers: Vec<Box<dyn Layer>> = vec![];
         let render_context = VulkanContext::new_windowed(
             &event_loop,
             WindowBuilder::new()
@@ -122,14 +121,15 @@ impl Application {
             texture_registry,
         ));
 
-        layers.push(world_layer);
-        layers.push(logic_layer);
-        layers.push(gui);
+        let mut layer_manager = LayerManager::default();
+        layer_manager.push(world_layer);
+        layer_manager.push(logic_layer);
+        layer_manager.push(gui);
 
         Ok(Self {
             event_loop,
             render_context,
-            layers,
+            layer_manager
         })
     }
 
@@ -140,16 +140,15 @@ impl Application {
         self.event_loop.run(move |event, _, flow| {
             let t = Instant::now();
             let delta = (t - t0).as_secs_f64();
-            for layer in self.layers.iter_mut() {
-                layer.on_tick(delta).unwrap();
-            }
             t0 = t;
+
+            self.layer_manager.tick(delta).unwrap();
 
             match event {
                 winit::event::Event::DeviceEvent { event, .. } => {
                     if mouse_grabbed {
                         if let DeviceEvent::MouseMotion { delta } = event {
-                            Self::notify_layers(&mut self.layers, &Event::MouseMotion(delta), flow);
+                            self.layer_manager.notify_all(&Event::MouseMotion(delta), flow).unwrap();
                         }
                     }
                 }
@@ -166,7 +165,7 @@ impl Application {
                         mouse_grabbed = grab;
                     }
 
-                    Self::notify_layers(&mut self.layers, &Event::GameEvent(event), flow);
+                    self.layer_manager.notify_all(&Event::GameEvent(event), flow).unwrap();
                 }
                 winit::event::Event::WindowEvent { event, .. } => {
                     if let WindowEvent::Resized(_) = event {
@@ -184,26 +183,18 @@ impl Application {
                     }
 
                     if let Ok(event) = Event::try_from(&event) {
-                        Self::notify_layers(&mut self.layers, &event, flow);
+                        self.layer_manager.notify_all(&event, flow).unwrap();
                     } else {
                         log::info!("Ignoring unhandled event: {:?}", event);
                     }
                 }
                 winit::event::Event::RedrawEventsCleared => {
                     self.render_context
-                        .do_frame(flow, &mut self.layers)
+                        .do_frame(flow, &mut self.layer_manager)
                         .unwrap();
                 }
                 _ => (),
             }
         });
-    }
-
-    fn notify_layers(layers: &mut [Box<dyn Layer>], event: &Event, flow: &mut ControlFlow) {
-        for layer in layers.iter_mut().rev() {
-            if layer.on_event(event, flow).unwrap() {
-                break;
-            }
-        }
     }
 }

@@ -19,7 +19,7 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use crate::{error::Error, event::Event, layer::Layer};
+use crate::{error::Error, event::Event, layer::LayerManager};
 
 use super::frame::Frame;
 
@@ -132,21 +132,17 @@ impl VulkanContext {
     pub fn do_frame(
         &mut self,
         flow: &mut ControlFlow,
-        layers: &mut [Box<dyn Layer>],
+        layer_manager: &mut LayerManager,
     ) -> Result<(), Error> {
         if self.need_swapchain_recreation {
             let dimensions = self.recreate_swapchain()?;
 
-            // TODO use some "event dispatcher" for that
             let event = Event::SwapchainInvalidated {
                 swapchain_images: &self.swapchain_images,
                 viewport: self.viewport.clone(),
                 dimensions,
             };
-            for layer in layers.iter_mut() {
-                // Ignore hierarchy, this event needs to be delivered to every layer
-                layer.on_event(&event, flow)?;
-            }
+            layer_manager.notify_all(&event, flow)?;
         }
 
         let (image_index, suboptimal, acquire_future) =
@@ -163,7 +159,8 @@ impl VulkanContext {
             destination: self.swapchain_images[image_index].clone(),
             viewport: self.viewport.clone(),
         };
-        for layer in layers.iter_mut() {
+
+        for layer in layer_manager.iter_mut() {
             in_future = layer.on_draw(in_future, &frame)?;
         }
 
