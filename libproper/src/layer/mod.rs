@@ -3,13 +3,14 @@ use winit::event_loop::ControlFlow;
 
 use crate::{error::Error, event::Event, render::frame::Frame};
 
-pub mod world;
-pub mod logic;
 pub mod gui;
+pub mod input;
+pub mod logic;
+pub mod world;
 
 #[derive(Default)]
 pub struct LayerManager {
-    layers: Vec<Box<dyn Layer>>
+    layers: Vec<Box<dyn Layer>>,
 }
 
 pub trait Layer {

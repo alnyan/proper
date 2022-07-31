@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use egui_winit_vulkano::{egui, Gui};
 use vulkano::{device::Queue, swapchain::Surface, sync::GpuFuture};
@@ -12,10 +12,12 @@ use crate::{
     event::{Event, GameEvent},
     layer::Layer,
     render::frame::Frame,
+    world::scene::Scene,
 };
 
 pub struct GuiLayer {
     inner: Gui,
+    scene: Arc<Mutex<Scene>>,
     event_proxy: EventLoopProxy<GameEvent>,
 }
 
@@ -24,9 +26,14 @@ impl GuiLayer {
         event_proxy: EventLoopProxy<GameEvent>,
         surface: Arc<Surface<Window>>,
         gfx_queue: Arc<Queue>,
+        scene: Arc<Mutex<Scene>>,
     ) -> Self {
         let inner = Gui::new(surface, None, gfx_queue, true);
-        Self { inner, event_proxy }
+        Self {
+            inner,
+            event_proxy,
+            scene,
+        }
     }
 }
 
@@ -56,12 +63,26 @@ impl Layer for GuiLayer {
             let ctx = gui.context();
 
             egui::SidePanel::new(egui::panel::Side::Left, 0)
-                .max_width(128.0)
+                .min_width(200.0)
+                .max_width(200.0)
                 .resizable(true)
                 .show(&ctx, |ui| {
                     if ui.add(egui::Button::new("TEXT")).clicked() {
                         self.event_proxy.send_event(GameEvent::TestEvent).ok();
                     }
+                    let scene = self.scene.lock().unwrap();
+                    let camera_position = scene.camera.position();
+                    let camera_pitch = scene.camera.pitch();
+                    let camera_yaw = scene.camera.yaw();
+                    ui.add(egui::Label::new(format!(
+                        "Position: {:.3}, {:.3}, {:.3}",
+                        camera_position.x, camera_position.y, camera_position.z
+                    )));
+
+                    ui.add(egui::Label::new(format!(
+                        "Pitch: {:.3}°, Yaw: {:.3}°",
+                        camera_pitch.to_degrees(), camera_yaw.to_degrees()
+                    )))
                 });
         });
 

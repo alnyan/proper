@@ -7,7 +7,7 @@ use std::{
 
 use error::Error;
 use event::{Event, GameEvent};
-use layer::{gui::GuiLayer, logic::LogicLayer, world::WorldLayer, LayerManager};
+use layer::{gui::GuiLayer, logic::LogicLayer, world::WorldLayer, LayerManager, input::InputLayer};
 use render::context::VulkanContext;
 use resource::{material::MaterialRegistry, model::ModelRegistry, texture::TextureRegistry};
 use vulkano::format::Format;
@@ -111,19 +111,23 @@ impl Application {
             proxy.clone(),
             render_context.surface().clone(),
             render_context.gfx_queue().clone(),
+            scene.clone(),
         ));
 
+        let input_layer = Box::new(InputLayer::new(proxy.clone()));
         let logic_layer = Box::new(LogicLayer::new(
             proxy,
             scene,
             material_registry,
             model_registry,
             texture_registry,
+            input_layer.state.clone(),
         ));
 
         let mut layer_manager = LayerManager::default();
         layer_manager.push(world_layer);
         layer_manager.push(logic_layer);
+        layer_manager.push(input_layer);
         layer_manager.push(gui);
 
         Ok(Self {

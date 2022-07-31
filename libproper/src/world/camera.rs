@@ -1,4 +1,6 @@
-use nalgebra::{Point3, Vector3};
+use std::f32::consts::PI;
+
+use nalgebra::{Point3, Vector3, clamp};
 
 #[derive(Default)]
 pub struct Camera {
@@ -11,6 +13,16 @@ impl Camera {
     #[inline]
     pub const fn position(&self) -> &Point3<f32> {
         &self.position
+    }
+
+    #[inline]
+    pub const fn pitch(&self) -> f32 {
+        self.pitch
+    }
+
+    #[inline]
+    pub const fn yaw(&self) -> f32 {
+        self.yaw
     }
 
     pub fn forward(&self) -> Vector3<f32> {
@@ -33,7 +45,8 @@ impl Camera {
     }
 
     pub fn rotate_angles(&mut self, pitch: f32, yaw: f32) {
-        self.pitch += pitch;
+        self.pitch = clamp(self.pitch + pitch, -89.9f32.to_radians(), 89.9f32.to_radians());
         self.yaw += yaw;
+        self.yaw = self.yaw - (self.yaw / (2.0 * PI)).round() * (2.0 * PI);
     }
 }
